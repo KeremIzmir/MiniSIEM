@@ -1,0 +1,47 @@
+{
+  "proje": "Mini SIEM",
+  "tarih": "2026-06-01",
+  "not": "Ollama erisimi yoktu; kalan 2 dosya (cli.py, dashboard/app.py) context_store API ozetine sadik kalinarak Claude Code tarafindan uretildi.",
+  "ozet": {
+    "toplam": 11,
+    "tamamlanan": 11,
+    "atlanan": 0
+  },
+  "dosyalar": [
+    { "ad": "parser/events.py",              "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/alert.py",            "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "parser/auth_parser.py",         "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "storage/store.py",              "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/brute_force.py",      "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/enumeration.py",      "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/fail_then_success.py","durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/anomaly.py",          "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "detection/engine.py",           "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti", "guvenlik": "temiz", "kaynak": "onceki oturum" },
+    { "ad": "cli.py",                        "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti (E2E: 36 olay, 5 alarm, exit=1, JSON dogrulandi)", "guvenlik": "temiz", "kaynak": "Claude Code (Ollama yok)" },
+    { "ad": "dashboard/app.py",              "durum": "✅ tamamlandi", "deneme": 1, "test": "gecti (Flask test_client: GET / -> 200, /api/summary, /api/alerts, /api/timeline -> 200)", "guvenlik": "temiz (debug kapali, host 127.0.0.1)", "kaynak": "Claude Code (Ollama yok)" }
+  ],
+  "calistirma": {
+    "cli": "python cli.py sample_auth.log",
+    "cli_json": "python cli.py sample_auth.log --json rapor.json",
+    "dashboard": "python -m dashboard.app sample_auth.log",
+    "bagimliliklar": "pip install -r requirements.txt"
+  },
+  "tespit_sonucu_ornek": {
+    "toplam_olay": 36,
+    "basarisiz_giris": 31,
+    "benzersiz_ip": 6,
+    "unparsed": 1,
+    "alarmlar": 5,
+    "ornek_alarmlar": [
+      "fail_then_success (HIGH) — 192.0.2.30: 6 basarisizdan sonra basarili giris",
+      "user_enumeration (MEDIUM) — 192.0.2.20: 7 farkli kullanici denedi",
+      "brute_force (LOW) — 192.0.2.10 / 192.0.2.20 / 192.0.2.30"
+    ]
+  },
+  "sonraki_adimlar": [
+    "Opsiyonel: pytest ile birim testleri eklenebilir (parser ve her tespit kurali icin).",
+    "Opsiyonel: storage/store.py'deki JSON katmani SQLite'a tasinabilir (API zaten arkasinda soyutlu).",
+    "Opsiyonel: dashboard'a tarih/IP filtresi ve canli yenileme eklenebilir.",
+    "Pipeline tamam: elle mudahale gerektiren atlanmis dosya YOK."
+  ]
+}

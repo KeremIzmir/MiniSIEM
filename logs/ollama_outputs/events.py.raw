@@ -1,0 +1,57 @@
+```python
+from dataclasses import dataclass
+from enum import StrEnum
+from datetime import datetime
+from typing import Optional
+
+# Event tipi tanimlamasi: log satirlarindan ayiklanan olay turleri
+class EventType(StrEnum):
+    """
+    Güvenlik olayi tipleri
+    """
+    FAILED_PASSWORD = "FAILED_PASSWORD"      # Parola hatali girildi
+    ACCEPTED_LOGIN = "ACCEPTED_LOGIN"        # Basarili giris yapildi
+    INVALID_USER = "INVALID_USER"            # Gecersiz kullanici adi
+    SUDO_FAILURE = "SUDO_FAILURE"            # Sudo yetkisi hatali
+    AUTH_FAILURE = "AUTH_FAILURE"            # Genel kimlik dogrulama hatasi
+    UNKNOWN = "UNKNOWN"                      # Bilinmeyen olay
+
+@dataclass
+class Event:
+    """
+    Parse edilmis bir güvenlik olayi modeli
+    """
+    timestamp: datetime
+    host: str
+    process: str
+    event_type: EventType
+    username: Optional[str]
+    source_ip: Optional[str]
+    port: Optional[int]
+    raw_line: str
+
+    def to_dict(self) -> dict:
+        return {
+            "timestamp": self.timestamp.isoformat(),
+            "host": self.host,
+            "process": self.process,
+            "event_type": self.event_type.value,
+            "username": self.username,
+            "source_ip": self.source_ip,
+            "port": self.port,
+            "raw_line": self.raw_line
+        }
+
+    @property
+    def is_failure(self) -> bool:
+        return self.event_type in (
+            EventType.FAILED_PASSWORD,
+            EventType.INVALID_USER,
+            EventType.SUDO_FAILURE,
+            EventType.AUTH_FAILURE
+        )
+
+    @property
+    def is_success(self) -> bool:
+        return self.event_type == EventType.ACCEPTED_LOGIN
+```

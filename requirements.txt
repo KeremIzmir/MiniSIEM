@@ -1,0 +1,7 @@
+# Mini SIEM bagimliliklari.
+# Ollama'nin kod icine yazdigi "# REQUIRES:" yorumlarindan Claude Code derledi.
+# Cekirdek (parser, detection, storage, cli) SADECE stdlib kullanir — disa bagimliligi yoktur.
+# Tek harici bagimlilik web panosu icindir.
+
+# dashboard/app.py — Flask web panosu (rotalar: /, /api/summary, /api/alerts, /api/timeline)
+flask>=3.0,<4.0    # gelistirme ortaminda dogrulanan surum: 3.1.1

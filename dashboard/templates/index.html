@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<!--
+  index.html — Mini SIEM panosunun tek sayfasi.
+
+  Bilincli olarak SADE: harici CSS/JS bagimliligi yok (CDN'siz calisir, kapali
+  agda da acilir). Tum stiller <style> icinde gomulu. Veriyi app.py'deki index()
+  rotasi Jinja2 degiskenleri olarak gonderir: summary, alerts, top_ips, timeline.
+
+  Jinja2 otomatik HTML-escape yapar; raw_line/aciklama gibi alanlar log'dan gelir,
+  bu yuzden escape onemli (log enjeksiyonu ekrana HTML basamasin).
+-->
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini SIEM</title>
+  <style>
+    :root { --bg:#0f1419; --card:#1a212b; --line:#2a3340; --txt:#e6e6e6; --muted:#8a96a3; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--txt);
+           font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+    header { padding:18px 24px; border-bottom:1px solid var(--line); }
+    header h1 { margin:0; font-size:20px; }
+    header .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+    main { padding:24px; max-width:1100px; margin:0 auto; }
+
+    /* Ozet kartlari */
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+    .card .n { font-size:28px; font-weight:700; }
+    .card .l { color:var(--muted); font-size:12px; margin-top:4px; text-transform:uppercase; }
+    .card.warn .n { color:#ffcf5c; }
+
+    section { margin-top:28px; }
+    section h2 { font-size:15px; color:var(--muted); text-transform:uppercase;
+                 letter-spacing:.5px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+
+    /* Alarmlar */
+    .alert { background:var(--card); border:1px solid var(--line); border-left-width:4px;
+             border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+    .alert.high   { border-left-color:#ff5c5c; }
+    .alert.medium { border-left-color:#ffcf5c; }
+    .alert.low    { border-left-color:#5cd0ff; }
+    .alert .top { display:flex; justify-content:space-between; align-items:center; }
+    .alert .rule { font-weight:700; }
+    .badge { font-size:11px; padding:2px 8px; border-radius:20px; text-transform:uppercase; }
+    .badge.high   { background:#ff5c5c22; color:#ff8a8a; }
+    .badge.medium { background:#ffcf5c22; color:#ffd97a; }
+    .badge.low    { background:#5cd0ff22; color:#9fe2ff; }
+    .alert .desc { margin:8px 0; }
+    .alert .meta { color:var(--muted); font-size:12px; }
+    .alert details { margin-top:8px; }
+    .alert summary { cursor:pointer; color:var(--muted); font-size:12px; }
+    .alert pre { background:#0c0f14; border:1px solid var(--line); border-radius:6px;
+                 padding:8px; overflow-x:auto; font-size:12px; margin:6px 0 0; white-space:pre-wrap; }
+
+    /* Tablolar */
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); font-size:13px; }
+    th { color:var(--muted); font-weight:600; }
+
+    /* Zaman serisi (saf CSS cubuk grafik) */
+    .bars { display:flex; align-items:flex-end; gap:3px; height:120px;
+            border-bottom:1px solid var(--line); padding-top:8px; }
+    .bar { flex:1 1 auto; min-width:6px; background:#ff5c5c66; border-radius:3px 3px 0 0; }
+    .bar:hover { background:#ff5c5c; }
+    .empty { color:var(--muted); font-style:italic; padding:12px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mini SIEM</h1>
+    <div class="sub">auth.log analiz panosu — parse, tespit ve alarm tek bakista</div>
+  </header>
+
+  <main>
+    <!-- ============ OZET KARTLARI ============ -->
+    <div class="cards">
+      <div class="card"><div class="n">{{ summary.toplam_olay }}</div><div class="l">Toplam olay</div></div>
+      <div class="card"><div class="n">{{ summary.basarisiz_giris }}</div><div class="l">Basarisiz giris</div></div>
+      <div class="card"><div class="n">{{ summary.benzersiz_ip }}</div><div class="l">Benzersiz IP</div></div>
+      <div class="card warn"><div class="n">{{ summary.alarm_sayisi }}</div><div class="l">Alarm</div></div>
+      {% if summary.unparsed %}
+      <div class="card"><div class="n">{{ summary.unparsed }}</div><div class="l">Parse edilemeyen</div></div>
+      {% endif %}
+    </div>
+
+    <!-- ============ ALARMLAR ============ -->
+    <section>
+      <h2>Alarmlar ({{ alerts|length }})</h2>
+      {% if alerts %}
+        {% for a in alerts %}
+        <div class="alert {{ a.severity }}">
+          <div class="top">
+            <span class="rule">{{ a.rule_name }}</span>
+            <span class="badge {{ a.severity }}">{{ a.severity }}</span>
+          </div>
+          <div class="desc">{{ a.description }}</div>
+          <div class="meta">
+            {% if a.source_ip %}IP: {{ a.source_ip }} &nbsp;·&nbsp;{% endif %}
+            Olay: {{ a.count }}
+            {% if a.time_window %}&nbsp;·&nbsp; {{ a.time_window }}{% endif %}
+          </div>
+          {% if a.evidence %}
+          <details>
+            <summary>Kanit ({{ a.evidence|length }} satir)</summary>
+            <pre>{% for line in a.evidence %}{{ line }}
+{% endfor %}</pre>
+          </details>
+          {% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="empty">Alarm yok — temiz gorunuyor.</p>
+      {% endif %}
+    </section>
+
+    <!-- ============ ZAMAN SERISI ============ -->
+    <section>
+      <h2>Dakika bazinda basarisiz giris</h2>
+      {% if timeline %}
+        {% set maxc = timeline | map(attribute=1) | max %}
+        <div class="bars">
+          {% for label, count in timeline %}
+          <div class="bar" style="height: {{ (count / maxc * 100) | round(0, 'floor') }}%"
+               title="{{ label }} — {{ count }} basarisiz"></div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">Veri yok.</p>
+      {% endif %}
+    </section>
+
+    <!-- ============ EN COK OLAY URETEN IP'LER ============ -->
+    <section>
+      <h2>En cok olay ureten IP'ler</h2>
+      {% if top_ips %}
+        <table>
+          <thead><tr><th>#</th><th>IP</th><th>Olay sayisi</th></tr></thead>
+          <tbody>
+            {% for ip, count in top_ips %}
+            <tr><td>{{ loop.index }}</td><td>{{ ip }}</td><td>{{ count }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty">Veri yok.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,37 @@
+Jun  1 05:49:55 web-01 sshd[12001]: Accepted password for alice from 198.51.100.5 port 60000 ssh2
+Jun  1 05:50:01 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54321 ssh2
+Jun  1 05:50:09 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54322 ssh2
+Jun  1 05:50:17 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54323 ssh2
+Jun  1 05:50:25 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54324 ssh2
+Jun  1 05:50:33 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54325 ssh2
+Jun  1 05:50:41 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54326 ssh2
+Jun  1 05:50:49 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54327 ssh2
+Jun  1 05:50:57 web-01 sshd[12010]: Failed password for root from 192.0.2.10 port 54328 ssh2
+Jun  1 05:51:02 web-01 sshd[12050]: Invalid user admin from 192.0.2.20 port 41001
+Jun  1 05:51:05 web-01 sshd[12050]: Failed password for invalid user admin from 192.0.2.20 port 41001 ssh2
+Jun  1 05:51:10 web-01 sshd[12051]: Invalid user oracle from 192.0.2.20 port 41002
+Jun  1 05:51:13 web-01 sshd[12051]: Failed password for invalid user oracle from 192.0.2.20 port 41002 ssh2
+Jun  1 05:51:18 web-01 sshd[12052]: Invalid user postgres from 192.0.2.20 port 41003
+Jun  1 05:51:21 web-01 sshd[12052]: Failed password for invalid user postgres from 192.0.2.20 port 41003 ssh2
+Jun  1 05:51:26 web-01 sshd[12053]: Invalid user test from 192.0.2.20 port 41004
+Jun  1 05:51:29 web-01 sshd[12053]: Failed password for invalid user test from 192.0.2.20 port 41004 ssh2
+Jun  1 05:51:34 web-01 sshd[12054]: Invalid user ubuntu from 192.0.2.20 port 41005
+Jun  1 05:51:37 web-01 sshd[12054]: Failed password for invalid user ubuntu from 192.0.2.20 port 41005 ssh2
+Jun  1 05:51:42 web-01 sshd[12055]: Invalid user jenkins from 192.0.2.20 port 41006
+Jun  1 05:51:45 web-01 sshd[12055]: Failed password for invalid user jenkins from 192.0.2.20 port 41006 ssh2
+Jun  1 05:51:50 web-01 sshd[12056]: Invalid user git from 192.0.2.20 port 41007
+Jun  1 05:51:53 web-01 sshd[12056]: Failed password for invalid user git from 192.0.2.20 port 41007 ssh2
+Jun  1 05:52:00 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50001 ssh2
+Jun  1 05:52:06 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50002 ssh2
+Jun  1 05:52:12 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50003 ssh2
+Jun  1 05:52:18 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50004 ssh2
+Jun  1 05:52:24 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50005 ssh2
+Jun  1 05:52:30 web-01 sshd[12100]: Failed password for deploy from 192.0.2.30 port 50006 ssh2
+Jun  1 05:52:36 web-01 sshd[12100]: Accepted password for deploy from 192.0.2.30 port 50007 ssh2
+Jun  1 05:52:40 web-01 sudo:    bob : pam_unix(sudo:auth): authentication failure; logname=bob uid=1000 euid=0 tty=/dev/pts/0 ruser=bob rhost=  user=bob
+Jun  1 05:52:45 web-01 sudo:    bob : pam_unix(sudo:auth): authentication failure; logname=bob uid=1000 euid=0 tty=/dev/pts/0 ruser=bob rhost=  user=bob
+Jun  1 05:53:00 web-01 sshd[12200]: Accepted publickey for deploy from 198.51.100.9 port 60010 ssh2
+Jun  1 05:53:05 web-01 sshd[12210]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=192.0.2.40  user=root
+Jun  1 05:53:30 web-01 CRON[12300]: pam_unix(cron:session): session opened for user root by (uid=0)
+this is not a valid syslog line at all -- should be counted as unparsed
+Jun  1 05:54:00 web-01 sshd[12400]: Accepted password for alice from 198.51.100.5 port 60050 ssh2
