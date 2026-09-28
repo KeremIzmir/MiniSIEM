@@ -1,0 +1,9 @@
+# Mini SIEM gelistirme/test bagimliliklari.
+# Calistirma icin gerekmez; sadece testleri kosmak icin:
+#   pip install -r requirements-dev.txt
+#   pytest
+
+-r requirements.txt
+
+pytest>=8.0        # gelistirme ortaminda dogrulanan surum: 9.0.3
+pytest-cov>=5.0    # kapsam: pytest --cov  (yapilandirma pyproject.toml'da)
