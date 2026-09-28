@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-siem"
+version = "1.0.0"
+description = "auth.log icinden guvenlik olaylarini cikaran ve alarm ureten kucuk SIEM"
+readme = "README.md"
+# StrEnum (parser/events.py, detection/alert.py) Python 3.11 ile geldi.
+requires-python = ">=3.11"
+dependencies = ["flask>=3.0,<4.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+# Kurulumdan sonra 'mini-siem' ve 'mini-siem-dashboard' komutlari PATH'e gelir.
+# argparse prog= adlari zaten bunlari duyuruyordu; artik gercekten var olurlar.
+[project.scripts]
+mini-siem = "cli:main"
+mini-siem-dashboard = "dashboard.app:main"
+
+[tool.setuptools]
+# Duz (flat) yerlesim: setuptools otomatik kesfi birden cok ust duzey paket
+# gorunce hata verir, bu yuzden paketleri ACIKCA listeliyoruz.
+packages = ["parser", "detection", "storage", "dashboard"]
+py-modules = ["cli"]
+
+[tool.setuptools.package-data]
+# Jinja2 sablonu .py olmadigi icin varsayilan olarak pakete GIRMEZ; bu satir
+# olmadan kurulmus panoda '/' rotasi TemplateNotFound ile patlar.
+dashboard = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+# Proje koku sys.path'e eklensin ki testler "from parser..." / "from detection..."
+# gibi paket importlarini calistirma dizininden bagimsiz cozebilsin.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["parser", "detection", "storage", "dashboard", "cli"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
