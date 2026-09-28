@@ -1,6 +1,15 @@
 name: CI
 
-on: [push, pull_request]
+# push yalnizca main icin: acik PR'i olan bir branch'e push hem 'push' hem
+# 'pull_request' tetikleyip ayni degisikligi iki kez test ediyordu. PR'lar
+# pull_request ile, main'e merge'ler push ile dogrulanir.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 # GITHUB_TOKEN yalnizca okuma yetkisiyle calisir: is akisi sadece checkout, kurulum
 # ve test yapar; depoya yazmasi gerekmez. En az yetki ilkesi.
