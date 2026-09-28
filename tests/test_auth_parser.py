@@ -83,6 +83,64 @@ def test_sshd_pam_failure_takes_rhost_ip():
     assert e.username == "root"
 
 
+# --- PAM alanlari: 'user=' asla 'ruser=' icinden eslesmemeli ---------------- #
+# sudo icin kullanici = komutu calistiran aktor: ruser > logname > user.
+# Diger PAM olaylari (sshd, su ...) hedef hesabi, yani 'user=' alanini kullanir.
+
+_SUDO_PAM = ("Jun  1 05:52:40 web-01 sudo: pam_unix(sudo:auth): authentication failure; "
+             "logname={logname} uid=1000 euid=0 tty=/dev/pts/0 ruser={ruser} rhost=  user={user}")
+
+
+def test_sudo_pam_prefers_ruser_over_target_user():
+    # rootpw/targetpw: parola root icin sorulur ama deneyen aktor alice.
+    e = parse_line(_SUDO_PAM.format(logname="alice", ruser="alice", user="root"), now=NOW)
+    assert e.event_type == EventType.SUDO_FAILURE
+    assert e.username == "alice"
+    assert e.source_ip is None
+
+
+def test_sudo_pam_falls_back_to_logname():
+    e = parse_line(_SUDO_PAM.format(logname="bob", ruser="", user="root"), now=NOW)
+    assert e.event_type == EventType.SUDO_FAILURE
+    assert e.username == "bob"
+
+
+def test_sudo_pam_falls_back_to_target_user():
+    e = parse_line(_SUDO_PAM.format(logname="", ruser="", user="bob"), now=NOW)
+    assert e.event_type == EventType.SUDO_FAILURE
+    assert e.username == "bob"
+
+
+def test_non_sudo_pam_uses_target_user_even_when_ruser_set():
+    # Eski regex 'user=' anahtarini 'ruser=alice' icinde bulup alice donduruyordu.
+    line = ("Jun  1 05:52:40 web-01 su: pam_unix(su:auth): authentication failure; "
+            "logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user=root")
+    e = parse_line(line, now=NOW)
+    assert e.event_type == EventType.AUTH_FAILURE
+    assert e.username == "root"
+    assert e.source_ip is None
+
+
+def test_pam_rhost_captured_when_ruser_set():
+    # Ayni hata: ruser doluyken rhost grubu atlaniyor ve kaynak IP kayboluyordu.
+    line = ("Jun  1 05:53:05 web-01 sshd[12210]: pam_unix(sshd:auth): authentication failure; "
+            "logname= uid=0 euid=0 tty=ssh ruser=svc rhost=192.0.2.40  user=root")
+    e = parse_line(line, now=NOW)
+    assert e.event_type == EventType.AUTH_FAILURE
+    assert e.username == "root"
+    assert e.source_ip == "192.0.2.40"
+
+
+def test_pam_failure_without_target_user_stays_unknown():
+    # Hedef 'user=' alani yoksa olay siniflandirilmaz, UNKNOWN kalir. (Eski regex
+    # bu satiri 'ruser=bob' icindeki 'user=bob' ile yanlislikla SUDO_FAILURE yapiyordu.)
+    line = ("Jun  1 05:52:40 web-01 sudo: pam_unix(sudo:auth): authentication failure; "
+            "logname=bob uid=1000 euid=0 tty=/dev/pts/0 ruser=bob rhost=")
+    e = parse_line(line, now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+    assert e.username is None
+
+
 def test_header_ok_body_unknown():
     # Baslik taninir ama govde hicbir kurala uymaz -> bilgi kaybolmasin, UNKNOWN dön.
     line = "Jun  1 05:53:30 web-01 CRON[12300]: pam_unix(cron:session): session opened for user root by (uid=0)"

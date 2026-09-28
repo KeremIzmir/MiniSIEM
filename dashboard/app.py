@@ -51,6 +51,8 @@ def build_store(
     success_window: int = 600,
     anomaly_k: float = 2.0,
     anomaly_min_volume: int = 5,
+    sudo_window: int = 300,
+    sudo_threshold: int = 3,
 ) -> EventStore:
     """
     Log dosyasini parse edip tum kurallari calistirir ve dolu bir EventStore dondurur.
@@ -74,6 +76,8 @@ def build_store(
         success_window=success_window,
         anomaly_k=anomaly_k,
         anomaly_min_volume=anomaly_min_volume,
+        sudo_window=sudo_window,
+        sudo_threshold=sudo_threshold,
     )
     for a in alerts:
         store.add_alert(a)
@@ -140,8 +144,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Anomali esigi (standart sapma katsayisi). Varsayilan 2.0.")
     p.add_argument("--anomaly-min-volume", type=int, default=5,
                    help="Anomali icin min. olay sayisi. Varsayilan 5.")
+    p.add_argument("--sudo-window", type=int, default=300,
+                   help="sudo_brute_force: ayni host+kullanici penceresi (saniye). Varsayilan 300.")
+    p.add_argument("--sudo-threshold", type=int, default=3,
+                   help="sudo_brute_force: min. basarisiz sudo sayisi. Varsayilan 3.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
-                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir.")
+                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
+                        "Yerel sudo alarmlarini bastirmaz.")
     p.add_argument("--debug", action="store_true",
                    help="Flask debug modu (SADECE gelistirme). Varsayilan KAPALI.")
     p.add_argument("--version", action="version", version=f"mini-siem-dashboard {__version__}")
@@ -163,6 +172,8 @@ def main() -> None:
             success_window=args.success_window,
             anomaly_k=args.anomaly_k,
             anomaly_min_volume=args.anomaly_min_volume,
+            sudo_window=args.sudo_window,
+            sudo_threshold=args.sudo_threshold,
         )
     except FileNotFoundError:
         print(f"HATA: dosya bulunamadi: {args.logfile}", file=sys.stderr)

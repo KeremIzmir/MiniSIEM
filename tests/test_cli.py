@@ -188,6 +188,82 @@ def test_anomaly_flags_change_result():
     assert "anomalous_ip" not in tuned
 
 
+def test_sudo_flag_defaults_and_overrides():
+    args = cli.build_parser().parse_args(["auth.log"])
+    assert (args.sudo_window, args.sudo_threshold) == (300, 3)
+    args = cli.build_parser().parse_args(["auth.log", "--sudo-window", "60", "--sudo-threshold", "5"])
+    assert (args.sudo_window, args.sudo_threshold) == (60, 5)
+
+
+def _json_report(tmp_path, *extra):
+    """Ornek logu --json ile calistir; (exit_code, rapor) dondur. Terminal metni parse edilmez."""
+    out_json = tmp_path / "r.json"
+    code, _ = _run([str(SAMPLE_LOG), "--quiet", "--json", str(out_json), *extra])
+    return code, json.loads(out_json.read_text(encoding="utf-8"))
+
+
+def test_sample_defaults_unchanged_and_no_sudo_alert(tmp_path):
+    # Ornekte yalnizca 2 sudo basarisizligi var; varsayilan esik 3 -> kural tetiklenmez.
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    code, data = _json_report(tmp_path)
+    s = data["summary"]
+    assert (s["toplam_olay"], s["basarisiz_giris"], s["alarm_sayisi"]) == (36, 31, 6)
+    assert "sudo_brute_force" not in {a["rule_name"] for a in data["alerts"]}
+    assert code == 1
+
+
+def test_sudo_threshold_flag_triggers_rule_on_sample(tmp_path):
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    _, default = _json_report(tmp_path)
+    code, tuned = _json_report(tmp_path, "--sudo-threshold", "2")
+    assert code == 1
+    assert tuned["summary"]["alarm_sayisi"] == 7
+    sudo = [a for a in tuned["alerts"] if a["rule_name"] == "sudo_brute_force"]
+    assert len(sudo) == 1
+    assert sudo[0]["source_ip"] is None
+    assert sudo[0]["count"] == 2
+    assert sudo[0]["description"].startswith("bob@web-01:")
+    # Diger kurallarin alarmlari aynen korunur.
+    others = sorted(a["rule_name"] for a in tuned["alerts"] if a["rule_name"] != "sudo_brute_force")
+    assert others == sorted(a["rule_name"] for a in default["alerts"])
+
+
+def test_sudo_window_flag_reaches_rule(tmp_path):
+    # Ornekteki 2 sudo basarisizligi 5 sn arayla: pencere 4 sn ile ayni pencereye sigmaz.
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    _, data = _json_report(tmp_path, "--sudo-threshold", "2", "--sudo-window", "4")
+    assert "sudo_brute_force" not in {a["rule_name"] for a in data["alerts"]}
+
+
+@pytest.mark.parametrize("flag,value", [("--sudo-threshold", "0"), ("--sudo-window", "-1")])
+def test_invalid_sudo_config_returns_2(flag, value):
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    code, _ = _run([str(SAMPLE_LOG), flag, value])
+    assert code == 2
+
+
+def test_sudo_alert_description_is_neutralised(tmp_path):
+    """sudo alarm aciklamasi log'dan gelen kullanici adini icerir -> terminalde temizlenmeli."""
+    p = tmp_path / "sudo.log"
+    p.write_text(
+        "".join(
+            f"Jun  1 05:52:4{i} web-01 sudo: pam_unix(sudo:auth): authentication failure; "
+            f"logname=x uid=1000 euid=0 tty=/dev/pts/0 ruser=b\x1b[2Job rhost=  user=root\n"
+            for i in range(3)
+        ),
+        encoding="utf-8",
+    )
+    code, out = _run([str(p), "--quiet", "--no-color"])
+    assert code == 1
+    assert "sudo_brute_force" in out
+    assert "\x1b" not in out
+    assert r"b\x1b[2Job@web-01" in out
+
+
 # --------------------------------------------------------------------------- #
 # HATA YOLLARI ve KUCUK DALLAR
 # --------------------------------------------------------------------------- #
