@@ -8,17 +8,22 @@ Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Infor
 
 ## Özellikler
 
-- **Parser** — `sshd` / `sudo` / PAM satırlarını regex ile `Event` nesnelerine çevirir. Eşleşmeyen satırları sessizce yutmaz, sayar ve raporlar.
+- **Parser** — `sshd` / `sudo` / PAM satırlarını regex ile `Event` nesnelerine çevirir. Eşleşmeyen satırları sessizce yutmaz, sayar ve raporlar. Geçersiz tarihli tek bir satır dosyanın geri kalanını iptal etmez.
 - **Tespit kuralları:**
+
   | Kural | Ne yakalar | Önem |
   |-------|-----------|------|
-  | `brute_force` | Bir IP'den kısa pencerede çok sayıda başarısız parola | düşük |
-  | `user_enumeration` | Bir IP'nin çok sayıda **farklı** kullanıcı adı denemesi | orta |
-  | `fail_then_success` | Ardışık başarısızlıkların ardından **başarılı** giriş (olası başarılı brute-force) | yüksek |
-  | `anomaly` | Hacim olarak istatistiksel aykırı (z-score) IP'ler | değişken |
+  | `brute_force` | Bir IP'den kısa pencerede çok sayıda başarısız parola | eşiğin kaç katı aşıldığına göre `low` → `medium` → `high` |
+  | `user_enumeration` | Bir IP'nin çok sayıda **farklı** kullanıcı adı denemesi | eşiğin 2 katından az `medium`, fazlası `high` |
+  | `fail_then_success` | Ardışık başarısızlıkların ardından **başarılı** giriş (olası başarılı brute-force) | daima `high` |
+  | `anomalous_ip` | Hacim olarak istatistiksel aykırı (z-score) IP'ler | başarısızlık oranı ≥ %80 ise `high`, değilse `medium` |
+
+  Önem derecesi sabit değildir; her kural bulgunun büyüklüğüne göre hesaplar.
+
 - **Allowlist** — güvenilir IP'ler tespitten **önce** elenir (yanlış alarm üretmesin).
-- **İki arayüz, tek mantık** — CLI ve pano aynı `parse → store → run_detections` akışını kullanır; kurallar tek yerde (`detection/engine.py`).
+- **İki arayüz, tek mantık** — CLI ve pano aynı `parse → store → run_detections` akışını kullanır; kurallar tek yerde (`detection/engine.py`) ve **her iki arayüz de aynı ayar yüzeyini** sunar.
 - **JSON çıktı** — `--json` ile özet + olaylar + alarmlar dışa aktarılır.
+- **Log enjeksiyonuna karşı korumalı çıktı** — log satırları saldırgan kontrolündedir; terminale basılmadan önce ANSI/kontrol karakterleri etkisiz hale getirilir (bkz. *Güvenlik notları*).
 
 ---
 
@@ -28,7 +33,13 @@ Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Infor
 pip install -r requirements.txt   # sadece flask (pano için)
 ```
 
-Python 3.11+ gerekir (`StrEnum` kullanılıyor). Geliştirme 3.13 üzerinde doğrulandı.
+veya paket olarak (`mini-siem` ve `mini-siem-dashboard` komutlarını PATH'e ekler):
+
+```bash
+pip install .          # ya da geliştirme için: pip install -e .
+```
+
+Python 3.11+ gerekir (`StrEnum` kullanılıyor); CI 3.11 / 3.12 / 3.13 üzerinde koşar.
 
 ---
 
@@ -39,12 +50,25 @@ Python 3.11+ gerekir (`StrEnum` kullanılıyor). Geliştirme 3.13 üzerinde doğ
 ```bash
 python cli.py sample_auth.log                          # terminal raporu
 python cli.py sample_auth.log --json rapor.json        # JSON dışa aktar
-python cli.py sample_auth.log --window 300 --threshold 5
-python cli.py sample_auth.log --allow 198.51.100.5     # güvenilir IP
 python cli.py sample_auth.log --quiet                  # sadece alarmlar
+python cli.py sample_auth.log --no-color               # ANSI renklerini kapat
+python cli.py sample_auth.log --allow 192.0.2.10       # güvenilir IP (alarmı düşer)
+python cli.py --version
 ```
 
-**Çıkış kodu:** alarm varsa `1`, temizse `0`, kullanım/dosya hatasında `2` (script'lerde "bulgu var mı" sinyali olarak kullanılabilir).
+Tespit eşikleri (hepsi isteğe bağlı):
+
+| Bayrak | Varsayılan | Etkilediği kural |
+|--------|-----------|------------------|
+| `--window SANIYE` | 300 | `brute_force` kayan pencere genişliği |
+| `--threshold N` | 5 | `brute_force` eşiği |
+| `--enum-threshold N` | 5 | `user_enumeration` farklı kullanıcı eşiği |
+| `--min-fails N` | 3 | `fail_then_success` min. başarısızlık |
+| `--success-window SANIYE` | 600 | `fail_then_success` geriye bakma süresi |
+| `--anomaly-k KAT` | 2.0 | `anomalous_ip` standart sapma katsayısı |
+| `--anomaly-min-volume N` | 5 | `anomalous_ip` min. mutlak olay sayısı |
+
+**Çıkış kodu:** alarm varsa `1`, temizse `0`, kullanım/dosya/ayar hatasında `2` (script'lerde "bulgu var mı" sinyali olarak kullanılabilir).
 
 ### Web panosu
 
@@ -52,6 +76,8 @@ python cli.py sample_auth.log --quiet                  # sadece alarmlar
 python -m dashboard.app sample_auth.log                # http://127.0.0.1:5000
 python -m dashboard.app sample_auth.log --host 0.0.0.0 --port 8080
 ```
+
+Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimlerle kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--allow`).
 
 Pano rotaları: `/` (HTML), `/api/summary`, `/api/alerts`, `/api/timeline` (JSON).
 
@@ -71,45 +97,100 @@ MiniSiem/
 │   ├── brute_force.py     # kayan pencere brute-force tespiti
 │   ├── enumeration.py     # kullanıcı enumeration tespiti
 │   ├── fail_then_success.py
-│   ├── anomaly.py         # z-score hacim anomalisi
+│   ├── anomaly.py         # leave-one-out z-score hacim anomalisi
 │   └── engine.py          # tüm kuralları çalıştırıp sıralar
 ├── storage/
 │   └── store.py           # EventStore (bellek + JSON, SQLite'a geçişe hazır)
 ├── dashboard/
 │   ├── app.py             # Flask uygulaması (application factory)
 │   └── templates/index.html
+├── tests/                 # 111 test (conftest.py + 9 test modülü)
+├── .github/workflows/ci.yml
 ├── cli.py                 # komut satırı arayüzü
 ├── sample_auth.log        # örnek log (RFC5737 test IP'leri)
-└── requirements.txt
+├── pyproject.toml         # paket metadata + pytest/coverage yapılandırması
+├── requirements.txt       # çalıştırma bağımlılıkları (flask)
+├── requirements-dev.txt   # test bağımlılıkları (pytest, pytest-cov)
+└── LICENSE
 ```
 
-Bağımlılık akışı (en az bağımlıdan en çoğa): `events`/`alert` → `auth_parser`/`store`/kurallar → `engine` → `cli`/`dashboard`.
+Her paketin bir `__init__.py` dosyası vardır. Bağımlılık akışı (en az bağımlıdan en çoğa): `events`/`alert` → `auth_parser`/`store`/kurallar → `engine` → `cli`/`dashboard`.
 
 ---
 
 ## Örnek çıktı
 
-`sample_auth.log` üzerinde: **36 olay, 31 başarısız giriş, 6 benzersiz IP, 5 alarm.**
+`sample_auth.log` üzerinde: **36 olay, 31 başarısız giriş, 6 benzersiz IP, 6 alarm, 1 parse edilemeyen satır.**
 
 ```
-[ HIGH ] fail_then_success  192.0.2.30 — 6 başarısız denemenin ardından BAŞARILI giriş (deploy)
-[MEDIUM] user_enumeration    192.0.2.20 — 7 farklı kullanıcı adı denendi
-[ LOW  ] brute_force         192.0.2.10 — 56 saniyede 8 başarısız parola denemesi
+=== ALARMLAR (6) ===
+[ HIGH ] anomalous_ip
+    IP        : 192.0.2.20
+    Olay sayisi: 14
+    Aciklama  : 192.0.2.20 anormal hacim: 14 olay (diger IP ortalamasi=3.8, esik=9.9).
+                Basarisiz oran=100%, 7 farkli kullanici, private IP.
+
+[ HIGH ] fail_then_success
+    IP        : 192.0.2.30
+    Olay sayisi: 6
+    Zaman     : 05:52:00-05:52:36 (36s)
+    Aciklama  : 192.0.2.30: 36 saniye icinde 6 basarisiz denemenin ardindan BASARILI
+                giris (kullanici: deploy). Olasi basarili brute-force - ACIL incele.
+
+[MEDIUM] user_enumeration
+    IP        : 192.0.2.20
+    Olay sayisi: 7
+    Aciklama  : 192.0.2.20 adresi 7 FARKLI kullanici adi denedi
+                (orn: admin, git, jenkins, oracle, postgres, test, ubuntu).
+
+[ LOW  ] brute_force ×3
 ```
 
-Her alarm; ilgili IP, olay sayısı, zaman penceresi ve **ham log satırlarından kanıt** içerir.
+Her alarm ilgili IP ve olay sayısını içerir. Ek olarak:
+- **Zaman penceresi** `brute_force` ve `fail_then_success` alarmlarında bulunur (diğer iki kural zaman değil çeşitlilik/hacim tabanlıdır).
+- **Ham log satırlarından kanıt** `anomalous_ip` dışındaki tüm kurallarda bulunur (o kural istatistik özeti üretir, tek bir satıra dayanmaz).
 
 ---
 
 ## Tasarım notları
 
 - **Storage soyutlaması:** CLI/pano doğrudan listeye değil `EventStore` metodlarına konuşur. JSON katmanı ileride `INSERT INTO ...` ile SQLite'a çevrilse dışarıdaki kod değişmez.
-- **Yıl çıkarımı:** `auth.log` yıl bilgisi içermez; parser referans yılı ekler ve yılbaşı geçişinde tarihin geleceğe kaymasını engeller.
+- **Yıl çıkarımı:** `auth.log` yıl bilgisi içermez; parser referans yılı ekler ve yılbaşı geçişinde tarihin geleceğe kaymasını engeller. `Feb 29` gibi yalnızca artık yıllarda geçerli tarihler en yakın uygun yıla düşürülür; hiçbir yılda geçerli olmayan tarih (`Feb 31`) satırı *unparsed* sayılır — tek bozuk satır tüm dosyayı iptal etmez.
+- **Anomali kuralı — maskeleme:** Eşik, adayın **kendisi hariç** diğer IP'lerden hesaplanır (*leave-one-out*). Aksi halde aykırı değer kendi eşiğini şişirir; anakütle sapmasıyla `n` örneklemde ulaşılabilecek en büyük z-score `sqrt(n-1)` olduğu için `k=2.0` ile 6'dan az IP'de alarm **matematiksel olarak imkânsız** olurdu.
+- **`fail_then_success` penceresi:** Pencere, başarının son başarısızlığa uzaklığına değil **başarısızlıkların kendisine** uygulanır; böylece haftalar önceki denemeler sayıma girmez.
 - **Genişletme:** Yeni bir kural eklemek = `detection/` altına bir fonksiyon + `engine.py`'ye bir satır. CLI ve pano değişmez.
+
+---
+
+## Güvenlik notları
+
+- **Terminal kaçış dizisi enjeksiyonu (CWE-117):** Bir SIEM'in işlediği log satırları saldırgan kontrolündedir — `Invalid user <ESC>[2J` gibi bir kullanıcı adıyla SSH'a bağlanmak yeterlidir. Ham satır kanıt olarak doğrudan basılırsa bu diziler analistin terminalinde çalışır. CLI, gösterimden hemen önce kontrol karakterlerini görünür `\xNN` biçimine çevirir. `--json` çıktısı ham veriyi korur (JSON kaçışları zaten güvenlidir).
+- **Pano:** Jinja2 otomatik HTML-escape yapar; log satırındaki `<script>` etiket olarak değil metin olarak render edilir.
+- **Geçersiz tespit ayarları** (negatif pencere, `threshold < 1`) traceback yerine çıkış kodu `2` ile reddedilir.
+
+---
+
+## Testler
+
+```bash
+pip install -r requirements-dev.txt   # pytest + pytest-cov
+pytest                                # 111 test
+pytest --cov --cov-report=term-missing
+```
+
+`tests/` altında parser, dört tespit kuralı, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır (kapsam ~%96). Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
+
+`.github/workflows/ci.yml` her push/PR'da testleri 3.11–3.13 üzerinde, Linux'ta koşar; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
+
+---
+
+## Lisans
+
+MIT — bkz. [LICENSE](LICENSE).
 
 ---
 
 ## Geliştirme
 
-Bu proje, bir Claude Code + Ollama ajan pipeline'ı ile dosya dosya inşa edildi. Süreç kayıtları:
+Bu proje, bir Claude Code + Ollama ajan pipeline'ı ile dosya dosya inşa edildi. Süreç kayıtları bilinçli olarak depoda tutulur:
 `logs/`, `context_store.json`, `dependency_graph.json`, `pipeline_raporu.json`.
