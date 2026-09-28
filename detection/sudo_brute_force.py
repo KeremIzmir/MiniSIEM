@@ -3,9 +3,11 @@ sudo_brute_force.py — Ayni host'ta ayni kullanicinin kisa surede TEKRARLANAN b
 
 Bagimlilik: parser/events.py, detection/alert.py.
 
-FIKIR: Tek bir yanlis sudo parolasi siradan bir yazim hatasidir. Ama ayni yerel hesap
-dakikalar icinde tekrar tekrar basarisiz oluyorsa bu, ele gecirilmis bir oturumdan
-root parolasini tahmin etme (yerel yetki yukseltme) denemesi olabilir.
+FIKIR: Tek bir basarisiz sudo kimlik dogrulamasi siradan bir yazim hatasi olabilir. Ama
+ayni yerel hesap kisa surede tekrar tekrar basarisiz oluyorsa bu, daha degerli bir
+guvenlik sinyalidir: olasi bir yerel yetki yukseltme ya da parola tahmin (credential
+guessing) denemesine isaret edebilir. Kural bunu kesin saldiri olarak degil, incelenecek
+bir sinyal olarak raporlar.
 
 NEDEN AYRI KURAL: Diger kurallarin hepsi olaylari KAYNAK IP'ye gore gruplar. sudo yerel
 bir islemdir; SUDO_FAILURE olaylarinda IP yoktur (rhost bos). Bu yuzden anahtar
@@ -36,13 +38,16 @@ def detect_sudo_brute_force(
 
     Parametreler:
       window    : pencere genisligi (saniye). Varsayilan 300 = 5 dakika.
-      threshold : pencerede alarm icin gereken min. basarisizlik. Varsayilan 3
-                  (sudo'nun varsayilan deneme hakki; tek yazim hatasi alarm uretmez).
+      threshold : pencerede alarm icin gereken min. basarisizlik. Varsayilan 3: MiniSIEM'in
+                  sectigi proje varsayilanidir (tek bir yazim hatasi alarm uretmesin diye);
+                  platformdan platforma degisebilen sudo ayarlarini yansitmaz, gerekirse
+                  --sudo-threshold ile ayarlanir.
 
     Donus: her tetikleyen (host, username) icin EN FAZLA bir Alert (en yogun pencereden).
 
     Severity: threshold <= sayi < 2*threshold -> MEDIUM, sayi >= 2*threshold -> HIGH.
-    LOW yok: esige ulasmak zaten deneme hakkini tuketmek demektir ve hedef root'tur.
+    LOW yok: esik zaten tekil yazim hatalarini eler; esige ulasan tekrarli sudo hatalari,
+    yetkili komut calistirma baglaminda oldugu icin en az MEDIUM onem tasir.
 
     Hata: window negatif ya da threshold 1'den kucukse ValueError — olay olmasa bile
     (dogrulama filtrelemeden ONCE yapilir; gecersiz ayar sessizce kabul edilmesin).
