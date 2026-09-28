@@ -1,0 +1,67 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # README "Python 3.11+" diyor; iddiayi her surumde gercekten dogrula.
+        # Gelistirme Windows'ta yapiliyor — Linux CI ayrica yol ayraci ve
+        # buyuk/kucuk harf duyarliligi varsayimlarini yakalar.
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Bagimliliklari kur
+        run: pip install -r requirements-dev.txt
+
+      - name: Testler
+        run: python -m pytest
+
+      - name: Uctan uca duman testi
+        # Ornek logta alarm VAR -> cikis kodu TAM OLARAK 1 beklenir.
+        # 0 = kurallar sessizce sustu, 2 = ayar hatasi. Ancak yakalanmamis bir
+        # istisna da Python'da 1 doner; bu yuzden cikis kodu tek basina yetmez:
+        # alarm basliginin basildigini ve traceback olmadigini da dogrulariz.
+        run: |
+          set +e
+          out=$(python cli.py sample_auth.log 2>&1)
+          status=$?
+          set -e
+          echo "$out"
+          echo "cikis kodu: $status (beklenen: 1)"
+          test "$status" -eq 1
+          if grep -q "Traceback" <<< "$out"; then
+            echo "HATA: CLI cokmus (traceback)"; exit 1
+          fi
+          grep -q "=== ALARMLAR" <<< "$out"
+
+      - name: Paket kurulabilir mi (metadata + sablon dahil)
+        run: |
+          pip install .
+          # Repo DISINA gec: repo kokunde 'import dashboard' kurulu paketi degil
+          # kaynak agaci bulur ve sablon kontrolu hicbir seyi dogrulamaz.
+          cd "$RUNNER_TEMP"
+          mini-siem --version
+          mini-siem-dashboard --version
+          python - <<'EOF'
+          import os
+          import pathlib
+          import dashboard.app
+
+          mod = pathlib.Path(dashboard.app.__file__).resolve()
+          print("dashboard.app yuklendi:", mod)
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          assert workspace not in mod.parents, f"kurulu paket degil, kaynak agac import edildi: {mod}"
+          template = mod.parent / "templates" / "index.html"
+          assert template.is_file(), f"index.html kurulu pakete girmemis: {template}"
+          print("sablon paketlendi:", template)
+          EOF
