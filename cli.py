@@ -152,8 +152,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Anomali esigi: kac standart sapma ustu aykiri sayilsin. Varsayilan 2.0.")
     p.add_argument("--anomaly-min-volume", type=int, default=5,
                    help="Anomali icin gereken min. mutlak olay sayisi. Varsayilan 5.")
+    p.add_argument("--sudo-window", type=int, default=300,
+                   help="sudo_brute_force: ayni host+kullanici basarisiz sudo penceresi (saniye). "
+                        "Varsayilan 300.")
+    p.add_argument("--sudo-threshold", type=int, default=3,
+                   help="sudo_brute_force: pencerede alarm icin min. basarisiz sudo sayisi. "
+                        "Varsayilan 3.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
-                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir.")
+                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
+                        "Yalnizca ag kaynakli olaylari etkiler; yerel sudo alarmlarini bastirmaz.")
     p.add_argument("--quiet", action="store_true",
                    help="Sadece alarmlari goster; ozet ve IP tablosunu atla.")
     p.add_argument("--no-color", action="store_true",
@@ -201,6 +208,8 @@ def run(argv: Optional[List[str]] = None, out=sys.stdout) -> int:
             success_window=args.success_window,
             anomaly_k=args.anomaly_k,
             anomaly_min_volume=args.anomaly_min_volume,
+            sudo_window=args.sudo_window,
+            sudo_threshold=args.sudo_threshold,
         )
     except ValueError as exc:
         # Kurallar anlamsiz esikleri (negatif pencere, threshold<1) reddeder.

@@ -103,6 +103,39 @@ def test_invalid_config_propagates_as_valueerror():
         run_detections(make_failures(6), window=-1)
 
 
+def _sudo_events(n=3, step=10):
+    """Ayni host+kullanicidan 'step' saniye arayla n SUDO_FAILURE (yerel: IP yok)."""
+    return [make_event(offset=i * step, event_type=EventType.SUDO_FAILURE, ip=None,
+                       user="bob", process="sudo") for i in range(n)]
+
+
+def test_sudo_rule_runs_with_defaults():
+    assert "sudo_brute_force" in _rules(run_detections(_sudo_events(3)))
+
+
+def test_sudo_threshold_reaches_rule():
+    assert "sudo_brute_force" not in _rules(run_detections(_sudo_events(3), sudo_threshold=4))
+
+
+def test_sudo_window_reaches_rule():
+    # 3 olay 10s arayla (toplam 20s): sudo_window=19 ile sigmaz.
+    events = _sudo_events(3, step=10)
+    assert "sudo_brute_force" in _rules(run_detections(events, sudo_window=20))
+    assert "sudo_brute_force" not in _rules(run_detections(events, sudo_window=19))
+
+
+@pytest.mark.parametrize("kwargs", [{"sudo_threshold": 0}, {"sudo_window": -1}])
+def test_invalid_sudo_config_propagates_as_valueerror(kwargs):
+    with pytest.raises(ValueError):
+        run_detections([], **kwargs)
+
+
+def test_ip_allowlist_does_not_suppress_sudo_alerts():
+    # IP allowlist yalnizca ag kaynakli olaylari eler; sudo olaylarinda IP yoktur.
+    alerts = run_detections(_sudo_events(3), allowlist=["192.0.2.1", "198.51.100.5"])
+    assert "sudo_brute_force" in _rules(alerts)
+
+
 def test_sort_is_stable_by_severity_then_count():
     events = _fts_events() + make_failures(6, ip="192.0.2.10", step=5)
     alerts = run_detections(events, threshold=5)

@@ -90,16 +90,24 @@ _INVALID_RE = re.compile(
 )
 
 # PAM kimlik dogrulama hatasi (hem sudo hem sshd):
-#   "pam_unix(sudo:auth): authentication failure; logname=bob ... rhost=  user=bob"
-#   "pam_unix(sshd:auth): authentication failure; ... rhost=192.0.2.30  user=root"
-#   .*? (non-greedy) -> "user=" anahtarina kadar ne varsa atla, gereksiz alanlari yutmadan dur.
-#   (?:rhost=(?P<rhost>\S*)\s+)? -> rhost varsa IP'yi buradan alabiliriz (sshd'de dolu, sudo'da bos).
-#   user=(?P<user>\S+) -> hedeflenen kullanici.
-_PAM_RE = re.compile(
-    r"authentication failure;.*?"
-    r"(?:rhost=(?P<rhost>\S*)\s+)?"
-    r"user=(?P<user>\S+)"
-)
+#   "pam_unix(sudo:auth): authentication failure; logname=bob ... ruser=bob rhost=  user=bob"
+#   "pam_unix(sshd:auth): authentication failure; ... ruser= rhost=192.0.2.30  user=root"
+# Once "authentication failure;" sonrasini al, sonra anahtar=deger alanlarini tek tek ayir.
+_PAM_RE = re.compile(r"authentication failure;(?P<fields>.*)$")
+
+# Tek bir PAM alani: "anahtar=deger" (deger bos olabilir: "rhost=  user=bob").
+#   (?<!\S) -> anahtar bir kelimenin ORTASINDAN baslayamaz. NEDEN: bu olmadan "user="
+#              aramasi "ruser=alice" icindeki "user=alice"i yakalar — eski tek-regex
+#              yaklasimi tam olarak bu hatayi yapiyordu (hem kullanici adi hem rhost bozuluyordu).
+_PAM_FIELD_RE = re.compile(r"(?<!\S)(?P<key>\w+)=(?P<value>\S*)")
+
+
+def _pam_fields(text: str) -> dict[str, str]:
+    """PAM mesajindaki anahtar=deger alanlarini dict'e cevirir (ayni anahtar tekrarlanirsa ilki)."""
+    fields: dict[str, str] = {}
+    for m in _PAM_FIELD_RE.finditer(text):
+        fields.setdefault(m["key"], m["value"])
+    return fields
 
 
 def _try_year(month: str, day: str, time_str: str, year: int) -> Optional[datetime]:
@@ -218,14 +226,23 @@ def parse_line(
             username=m["user"], source_ip=m["ip"], port=port, raw_line=line,
         )
 
-    if m := _PAM_RE.search(message):
-        # sudo sureci -> SUDO_FAILURE; diger (sshd vb.) -> genel AUTH_FAILURE.
-        etype = EventType.SUDO_FAILURE if process == "sudo" else EventType.AUTH_FAILURE
+    if (m := _PAM_RE.search(message)) and (fields := _pam_fields(m["fields"])).get("user"):
+        # Hedef 'user=' alani dolu olmali; yoksa olay siniflandirilmaz (UNKNOWN'a duser).
+        if process == "sudo":
+            # sudo'da ilgilendigimiz kisi parolayi yazan AKTORDUR: ruser > logname > user.
+            # 'user=' hedef hesaptir; rootpw/targetpw ayarinda 'root' olur ve tum
+            # kullanicilari tek hesapta birlestirirdi.
+            etype = EventType.SUDO_FAILURE
+            username = fields.get("ruser") or fields.get("logname") or fields["user"]
+        else:
+            # sshd, su vb.: dogrulanmaya calisilan HEDEF hesap.
+            etype = EventType.AUTH_FAILURE
+            username = fields["user"]
         # rhost dolu ve bos string degilse kaynak IP olarak kullan.
-        rhost = m["rhost"] if m["rhost"] else None
+        rhost = fields.get("rhost") or None
         return Event(
             timestamp, host, process, etype,
-            username=m["user"], source_ip=rhost, port=None, raw_line=line,
+            username=username, source_ip=rhost, port=None, raw_line=line,
         )
 
     # Baslik taninip mesaj siniflandirilamadi: bilgiyi kaybetme, UNKNOWN dondur.

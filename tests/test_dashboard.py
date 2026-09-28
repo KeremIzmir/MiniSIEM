@@ -201,3 +201,46 @@ def test_arg_parser_accepts_overrides():
     assert args.min_fails == 7
     assert args.anomaly_k == 3.5
     assert args.allow == ["10.0.0.1", "10.0.0.2"]
+
+
+# ------------------------------ sudo_brute_force ----------------------------- #
+def test_arg_parser_sudo_defaults_and_overrides():
+    args = build_arg_parser().parse_args(["auth.log"])
+    assert (args.sudo_window, args.sudo_threshold) == (300, 3)
+    args = build_arg_parser().parse_args(["auth.log", "--sudo-window", "60", "--sudo-threshold", "5"])
+    assert (args.sudo_window, args.sudo_threshold) == (60, 5)
+
+
+def _sudo_rules(store):
+    return [a for a in store.alerts if a["rule_name"] == "sudo_brute_force"]
+
+
+def test_build_store_passes_sudo_parameters():
+    # Ornekte 2 sudo basarisizligi (5 sn arayla): varsayilan esik 3 ile alarm yok.
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    assert _sudo_rules(build_store(str(SAMPLE_LOG))) == []
+    tuned = build_store(str(SAMPLE_LOG), sudo_threshold=2)
+    assert len(_sudo_rules(tuned)) == 1
+    assert tuned.summary()["alarm_sayisi"] == 7
+    assert _sudo_rules(build_store(str(SAMPLE_LOG), sudo_threshold=2, sudo_window=4)) == []
+
+
+def test_build_store_rejects_invalid_sudo_config():
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    with pytest.raises(ValueError):
+        build_store(str(SAMPLE_LOG), sudo_threshold=0)
+
+
+@pytest.mark.parametrize("flag,value", [("--sudo-threshold", "0"), ("--sudo-window", "-1")])
+def test_main_invalid_sudo_config_exits_2(monkeypatch, capsys, flag, value):
+    # main() gecersiz ayarda sunucuyu BASLATMADAN kullanim hatasiyla cikmali.
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    from dashboard import app as app_module
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", str(SAMPLE_LOG), flag, value])
+    with pytest.raises(SystemExit) as exc:
+        app_module.main()
+    assert exc.value.code == 2
+    assert "gecersiz tespit ayari" in capsys.readouterr().err
