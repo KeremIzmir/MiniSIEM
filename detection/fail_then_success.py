@@ -28,11 +28,22 @@ def detect_fail_then_success(
 
     Parametreler:
       min_fails : basariliyi suheli yapan, oncesindeki min. ardisik basarisizlik (varsayilan 3).
-      window    : son basarisizlik ile basari arasindaki max. sure (saniye, varsayilan 600=10dk).
-                  Cok zaman gectiyse muhtemelen mesru kullanicidir, alarm uretme.
+      window    : basaridan GERIYE dogru bakilacak sure (saniye, varsayilan 600=10dk).
+                  Sadece bu pencereye DUSEN basarisizliklar sayilir.
 
     Donus: her tetikleyen (IP, basari ani) icin bir Alert.
+
+    PENCERE SEMANTIGI (onemli): Pencere, basarinin SON basarisizliga uzakligina
+    degil, basarisizliklarin KENDISINE uygulanir. Eskiden yalnizca son basarisizlik
+    kontrol edilirdi; boylece haftalar once olmus basarisizliklar da sayima girip
+    "3 basarisiz sonra basarili" alarmi uretebiliyordu. Artik pencere disinda kalan
+    eski basarisizliklar elenir — sayim da kanit da yalnizca ilgili pencereyi anlatir.
     """
+    if min_fails < 1:
+        raise ValueError(f"min_fails en az 1 olmali: {min_fails}")
+    if window < 0:
+        raise ValueError(f"window negatif olamaz: {window}")
+
     alerts: list[Alert] = []
 
     by_ip: dict[str, list[Event]] = {}
@@ -53,28 +64,33 @@ def detect_fail_then_success(
             if e.is_failure:
                 fail_streak.append(e)
             elif e.is_success:
-                # Basari geldi: oncesinde yeterli basarisizlik var mi?
-                if len(fail_streak) >= min_fails:
-                    gap = e.timestamp.timestamp() - fail_streak[-1].timestamp.timestamp()
-                    if gap <= window:
-                        start = fail_streak[0].timestamp.strftime("%H:%M:%S")
-                        end = e.timestamp.strftime("%H:%M:%S")
-                        alerts.append(
-                            Alert(
-                                rule_name="fail_then_success",
-                                severity=Severity.HIGH,  # olasi BASARILI brute-force
-                                source_ip=ip,
-                                count=len(fail_streak),
-                                time_window=f"{start}-{end}",
-                                description=(
-                                    f"{ip}: {len(fail_streak)} basarisiz denemenin ardindan "
-                                    f"BASARILI giris (kullanici: {e.username}). "
-                                    f"Olasi basarili brute-force - ACIL incele."
-                                ),
-                                # Kanit: basarisizliklar + basari satiri.
-                                evidence=[ev.raw_line for ev in fail_streak[-5:]] + [e.raw_line],
-                            )
+                # Basari geldi: SADECE pencere icindeki basarisizliklari say.
+                # (Pencere disinda kalan eski denemeler bu basariyla ilgisizdir.)
+                success_ts = e.timestamp.timestamp()
+                recent = [
+                    f for f in fail_streak
+                    if success_ts - f.timestamp.timestamp() <= window
+                ]
+                if len(recent) >= min_fails:
+                    start = recent[0].timestamp.strftime("%H:%M:%S")
+                    end = e.timestamp.strftime("%H:%M:%S")
+                    span = int(success_ts - recent[0].timestamp.timestamp())
+                    alerts.append(
+                        Alert(
+                            rule_name="fail_then_success",
+                            severity=Severity.HIGH,  # olasi BASARILI brute-force
+                            source_ip=ip,
+                            count=len(recent),
+                            time_window=f"{start}-{end} ({span}s)",
+                            description=(
+                                f"{ip}: {span} saniye icinde {len(recent)} basarisiz denemenin "
+                                f"ardindan BASARILI giris (kullanici: {e.username}). "
+                                f"Olasi basarili brute-force - ACIL incele."
+                            ),
+                            # Kanit: penceredeki son basarisizliklar + basari satiri.
+                            evidence=[ev.raw_line for ev in recent[-5:]] + [e.raw_line],
                         )
+                    )
                 fail_streak = []  # basari sonrasi sayaci sifirla (yeni dizi baslasin)
 
     return alerts

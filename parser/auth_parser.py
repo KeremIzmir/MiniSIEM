@@ -102,15 +102,30 @@ _PAM_RE = re.compile(
 )
 
 
+def _try_year(month: str, day: str, time_str: str, year: int) -> Optional[datetime]:
+    """
+    Verilen yil ile zaman damgasini kurmayi dener; imkansizsa None doner.
+
+    NEDEN GEREKLI: "Feb 29" sadece ARTIK yillarda gecerlidir. Log yil bilgisi
+    tasimadigi icin denedigimiz yil artik yil degilse strptime ValueError firlatir.
+    Bu istisnayi burada yutariz ki cagiran taraf baska bir yil deneyebilsin.
+    """
+    try:
+        # %Y %b %d %H:%M:%S -> ("2026", "Jun", "1", "05:50:01"). %d tek haneli gunu de kabul eder.
+        return datetime.strptime(f"{year} {month} {day} {time_str}", "%Y %b %d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def _parse_timestamp(
     month: str,
     day: str,
     time_str: str,
     reference_year: int,
     now: Optional[datetime] = None,
-) -> datetime:
+) -> Optional[datetime]:
     """
-    Syslog zaman damgasini datetime'a cevirir.
+    Syslog zaman damgasini datetime'a cevirir. Cozulemezse None doner.
 
     SORUN: auth.log YIL bilgisi icermez ("Jun  1 05:50:01"). Yili biz eklemeliyiz.
     YAKLASIM:
@@ -118,16 +133,33 @@ def _parse_timestamp(
       - SINIR KONTROLU: Olusan tarih 'now'dan belirgin sekilde ILERIDE ise
         (orn. su an Ocak ama log 'Dec' diyorsa), bu log muhtemelen GECEN yila aittir;
         yili bir azalt. Bu, yilbasi gecislerinde tarihin gelecege kaymasini onler.
+
+    ARTIK YIL TUZAGI: "Feb 29" satiri, denenen yil artik yil degilse gecersizdir.
+    Eskiden bu ValueError firlatip TUM dosyanin parse'ini cokertiyordu. Artik
+    sirayla (reference_year, reference_year-1) denenir; ikisi de tutmazsa
+    en yakin onceki artik yila kadar geriye bakilir ve hicbiri olmazsa None doner
+    (satir 'unparsed' sayilir — sessizce yanlis bir tarih uydurmayiz).
     """
     now = now or datetime.now()
-    # %Y %b %d %H:%M:%S -> ("2026", "Jun", "1", "05:50:01"). %d tek haneli gunu de kabul eder.
-    parsed = datetime.strptime(
-        f"{reference_year} {month} {day} {time_str}", "%Y %b %d %H:%M:%S"
-    )
-    # 1 gunden fazla gelecekteyse: yil sinirini gecmis demektir -> bir yil geri al.
-    if parsed.timestamp() - now.timestamp() > 86400:
-        parsed = parsed.replace(year=reference_year - 1)
-    return parsed
+
+    parsed = _try_year(month, day, time_str, reference_year)
+    if parsed is not None:
+        # 1 gunden fazla gelecekteyse: yil sinirini gecmis demektir -> bir yil geri al.
+        # replace() yerine yeniden kurariz: 29 Subat, artik olmayan bir yila
+        # replace edilemez (ValueError). Kurulamazsa referans yili oldugu gibi birakiriz.
+        if parsed.timestamp() - now.timestamp() > 86400:
+            earlier = _try_year(month, day, time_str, reference_year - 1)
+            if earlier is not None:
+                return earlier
+        return parsed
+
+    # reference_year ile kurulamadi (tipik olarak 29 Subat + artik olmayan yil).
+    # En fazla 4 yil geriye bakip gecerli olan ilk yili kullan (artik yil periyodu 4).
+    for delta in range(1, 5):
+        candidate = _try_year(month, day, time_str, reference_year - delta)
+        if candidate is not None:
+            return candidate
+    return None  # gercekten gecersiz tarih (orn "Feb 31") -> unparsed
 
 
 def parse_line(
@@ -140,7 +172,8 @@ def parse_line(
 
     Donus:
       - Event  : satir taninabildiyse.
-      - None   : baslik bile eslesmediyse (bu satir 'unparsed' sayilacak).
+      - None   : baslik eslesmediyse VEYA tarih gecerli degilse
+                 (bu satir 'unparsed' sayilacak).
     Not: Baslik eslesip mesaj hicbir ozel kurala uymazsa, olayi yine de
     EventType.UNKNOWN olarak doneriz — boylece host/surec/zaman bilgisi kaybolmaz
     ve satir 'unparsed' degil 'taninan ama siniflandirilamayan' olur.
@@ -157,6 +190,10 @@ def parse_line(
     timestamp = _parse_timestamp(
         header["month"], header["day"], header["time"], reference_year, now
     )
+    if timestamp is None:
+        # Gecersiz tarih (orn "Feb 31"). Tek bozuk satir TUM dosyayi cokertmesin:
+        # satiri unparsed say, isleme devam et.
+        return None
     host = header["host"]
     process = header["process"]
     message = header["message"]

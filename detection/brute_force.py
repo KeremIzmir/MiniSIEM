@@ -35,7 +35,17 @@ def detect_brute_force(
       threshold : pencerede alarm uretmek icin gereken min. basarisizlik sayisi.
 
     Donus: her tetikleyen IP icin bir Alert.
+
+    Hata: window negatif ya da threshold 1'den kucukse ValueError.
+    NEDEN: Bunlar anlamsiz yapilandirmalardir ve sessizce kotu davranirlar —
+    negatif pencere two-pointer'i tasirir (IndexError), threshold<=0 ise TEK bir
+    olayla bile "high" alarm uretir. Sessiz cop yerine net hata veriyoruz.
     """
+    if window < 0:
+        raise ValueError(f"window negatif olamaz: {window}")
+    if threshold < 1:
+        raise ValueError(f"threshold en az 1 olmali: {threshold}")
+
     alerts: list[Alert] = []
 
     # 1) Basarisiz PAROLA denemelerini IP'ye gore grupla.
@@ -56,7 +66,9 @@ def detect_brute_force(
 
         for right in range(len(times)):
             # Pencere 'window'u astiysa sol kenari ileri it.
-            while times[right] - times[left] > window:
+            # 'left < right' korumasi: pencere tek olayin altina INEMEZ. Bu olmadan
+            # patolojik yapilandirmalarda left, right'i gecip listeyi tasardi.
+            while left < right and times[right] - times[left] > window:
                 left += 1
             current = right - left + 1
             if current > best_count:

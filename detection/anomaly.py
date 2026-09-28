@@ -10,11 +10,23 @@ deneme hacmini bakar, ortalamadan COK sapan IP'leri flag'leriz.
 NEDEN Z-SCORE (ortalama + k*stddev)?
   - Hesabi basit ve sezgisel: "ortalamadan k standart sapma uzakta mi?"
   - Ogretici: istatistigin temel araci, anlatmasi kolay.
-  - Sinirlamasi: kucuk orneklemde ve agir-kuyruklu dagilimda yaniltici olabilir
-    (cunku ortalama ve stddev'in kendisi aykiri degerlerden etkilenir). Gercek
-    SIEM'de medyan + IQR (ceyrekler arasi acoklik) daha saglam (robust) olurdu;
-    ama bu ogrenme projesinde z-score'u tercih ettik. IQR'a gecmek istersen:
-    Q1, Q3 hesapla; ust sinir = Q3 + 1.5*(Q3-Q1).
+  - Sinirlamasi: kucuk orneklemde ve agir-kuyruklu dagilimda yaniltici olabilir.
+
+MASKELEME (masking) SORUNU VE COZUMU — bu kuralin en onemli detayi:
+  Esik, aykiri degerin KENDISI de icinde olacak sekilde hesaplanirsa, aykiri deger
+  kendi esigini yukari iter ve kendini gizler. Anakitle standart sapmasiyla n
+  elemanli bir orneklemde bir elemanin ulasabilecegi EN BUYUK z-score sqrt(n-1)'dir.
+  Yani k=2.0 ile n<6 iken alarm MATEMATIKSEL OLARAK imkansizdi: 5 IP'den biri
+  digerlerinin 100 kati olsa bile tetiklenmiyordu.
+
+  COZUM: "birini disarida birak" (leave-one-out). Her IP degerlendirilirken taban
+  istatistik DIGER IP'lerden hesaplanir; aday kendi esigini kirletemez. Bu, standart
+  bir aykiri-deger tespiti yaklasimidir ve z-score'un ogretici sadeligini korur.
+
+  STDDEV TABANI (floor): Tum "diger" IP'ler ayni hacimdeyse taban sapma 0 cikar ve
+  esik = ortalama olur; o zaman 1 olay fazlasi bile "aykiri" sayilirdi. Bunu
+  onlemek icin sapmaya 1.0 olaylik bir taban koyariz (min_volume freni de ayrica
+  calisir).
 
 EK OLCUTLER (alarm aciklamasina baglam katar):
   - failed/total orani: IP'nin ne kadari basarisiz.
@@ -70,17 +82,24 @@ def detect_anomalous_ips(
         if e.username:
             users.setdefault(ip, set()).add(e.username)
 
-    if len(total) < 2:
-        return alerts  # istatistik icin en az 2 IP lazim (stddev tanimsiz olur)
-
-    volumes = list(total.values())
-    mean = statistics.mean(volumes)
-    # pstdev: anakitle standart sapmasi (elimizdeki tum IP'ler 'populasyon'). n=1 ise 0 doner.
-    stdev = statistics.pstdev(volumes)
-    cutoff = mean + k * stdev  # bu hacmin USTU = aykiri
+    if len(total) < 3:
+        # Leave-one-out icin: aday disarida kalinca tabanda EN AZ 2 IP kalmali,
+        # yoksa "digerleri" tek elemanli olur ve sapma anlamsizlasir.
+        return alerts
 
     for ip, vol in total.items():
-        if vol >= min_volume and stdev > 0 and vol > cutoff:
+        if vol < min_volume:
+            continue  # guvenlik freni: kucuk mutlak hacmi hic degerlendirme
+
+        # LEAVE-ONE-OUT: taban istatistik adayin KENDISI haric hesaplanir.
+        baseline = [v for other_ip, v in total.items() if other_ip != ip]
+        mean = statistics.mean(baseline)
+        # pstdev: anakitle standart sapmasi ('digerleri' elimizdeki populasyon).
+        stdev = statistics.pstdev(baseline)
+        # Sapma tabani: tum taban esitse (stdev=0) esik ortalamaya cokmesin.
+        cutoff = mean + k * max(stdev, 1.0)
+
+        if vol > cutoff:
             fcount = failed.get(ip, 0)
             ratio = fcount / vol if vol else 0.0
             ucount = len(users.get(ip, set()))
@@ -97,7 +116,7 @@ def detect_anomalous_ips(
                     time_window=None,
                     description=(
                         f"{ip} anormal hacim: {vol} olay "
-                        f"(ortalama={mean:.1f}, esik=ort+{k}*std={cutoff:.1f}). "
+                        f"(diger IP ortalamasi={mean:.1f}, esik={cutoff:.1f}). "
                         f"Basarisiz oran={ratio:.0%}, {ucount} farkli kullanici, "
                         f"{'public' if is_public_ip(ip) else 'private'} IP."
                     ),

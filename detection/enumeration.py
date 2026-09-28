@@ -29,20 +29,28 @@ def detect_enumeration(
 
     Donus: esigi asan her IP icin bir Alert.
     """
+    if threshold < 1:
+        raise ValueError(f"threshold en az 1 olmali: {threshold}")
+
     alerts: list[Alert] = []
 
     # Enumeration sinyali olan olay turleri: var olmayan kullanici (INVALID_USER)
     # ve var olmayan kullaniciya parola denemesi de dahil basarisiz girisler.
     relevant = (EventType.INVALID_USER, EventType.FAILED_PASSWORD)
 
-    # IP -> {kullanici adlari} ve IP -> kanit satirlari
+    # IP -> {kullanici adlari} ve IP -> KULLANICI BASINA tek kanit satiri.
+    # Kaniti kullaniciya gore anahtarlariz cunku bu kural CESITLILIGI anlatir:
+    # sshd tipik olarak ayni deneme icin hem "Invalid user X" hem "Failed password
+    # for invalid user X" yazar. Her satiri eklersek 10 satirlik kanit yalnizca 5
+    # farkli kullaniciyi gosterir — okuyan kisi cesitliligi goremez.
     users_by_ip: dict[str, set[str]] = {}
-    evidence_by_ip: dict[str, list[str]] = {}
+    evidence_by_ip: dict[str, dict[str, str]] = {}
 
     for e in events:
         if e.event_type in relevant and e.source_ip and e.username:
             users_by_ip.setdefault(e.source_ip, set()).add(e.username)
-            evidence_by_ip.setdefault(e.source_ip, []).append(e.raw_line)
+            # setdefault: o kullanici icin GORULEN ILK satiri sakla, sonrakileri atla.
+            evidence_by_ip.setdefault(e.source_ip, {}).setdefault(e.username, e.raw_line)
 
     for ip, users in users_by_ip.items():
         distinct = len(users)
@@ -65,7 +73,8 @@ def detect_enumeration(
                         f"{ip} adresi {distinct} FARKLI kullanici adi denedi "
                         f"(orn: {ornek}). Olasi hesap taramasi/credential stuffing."
                     ),
-                    evidence=evidence_by_ip[ip][:10],
+                    # Kullanici basina bir satir, en fazla 10 farkli kullanici.
+                    evidence=list(evidence_by_ip[ip].values())[:10],
                 )
             )
 
