@@ -1,5 +1,7 @@
 # Mini SIEM
 
+[![CI](https://github.com/KeremIzmir/MiniSIEM/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/KeremIzmir/MiniSIEM/actions/workflows/ci.yml)
+
 Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Information and Event Management) aracı. Ham log satırlarını yapılandırılmış olaylara çevirir, üzerinde güvenlik tespit kuralları çalıştırır ve sonucu hem terminalde hem de web panosunda gösterir.
 
 > Çekirdek (parser / detection / storage / cli) **saf stdlib** ile çalışır — tek harici bağımlılık web panosu için `flask`.
@@ -188,7 +190,7 @@ pytest --cov --cov-report=term-missing
 
 `tests/` altında parser, beş tespit kuralı, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır (kapsam ~%98). Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
 
-`.github/workflows/ci.yml` her push/PR'da testleri 3.11–3.13 üzerinde, Linux'ta koşar; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
+`.github/workflows/ci.yml`, `main` hedefli pull request'lerde ve `main` branch'ine yapılan push/merge'lerde testleri Python 3.11–3.13 üzerinde, Linux'ta çalıştırır; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
 
 ---
 
