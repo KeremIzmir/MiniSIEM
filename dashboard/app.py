@@ -38,6 +38,8 @@ from parser.auth_parser import parse_file
 from storage.store import EventStore
 from detection.engine import run_detections
 
+__version__ = "1.0.0"
+
 
 def build_store(
     logfile: str,
@@ -45,12 +47,17 @@ def build_store(
     threshold: int = 5,
     enum_threshold: int = 5,
     allowlist: Optional[list] = None,
+    min_fails: int = 3,
+    success_window: int = 600,
+    anomaly_k: float = 2.0,
+    anomaly_min_volume: int = 5,
 ) -> EventStore:
     """
     Log dosyasini parse edip tum kurallari calistirir ve dolu bir EventStore dondurur.
 
     CLI'deki ile AYNI akis; ayri tutuyoruz cunku pano bunu acilista bir kez,
     CLI ise her calistirmada cagirir. Mantik (engine) ikisinde de ortak.
+    Parametreler CLI ile AYNI yuzeyi sunar — iki arayuz ayni ayarlari kabul etsin.
     """
     events, unparsed = parse_file(logfile)
     store = EventStore()
@@ -63,6 +70,10 @@ def build_store(
         threshold=threshold,
         enum_threshold=enum_threshold,
         allowlist=allowlist,
+        min_fails=min_fails,
+        success_window=success_window,
+        anomaly_k=anomaly_k,
+        anomaly_min_volume=anomaly_min_volume,
     )
     for a in alerts:
         store.add_alert(a)
@@ -121,10 +132,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--window", type=int, default=300, help="Brute-force pencere (saniye).")
     p.add_argument("--threshold", type=int, default=5, help="Brute-force esigi.")
     p.add_argument("--enum-threshold", type=int, default=5, help="Enumeration esigi.")
+    p.add_argument("--min-fails", type=int, default=3,
+                   help="fail_then_success: min. basarisizlik sayisi. Varsayilan 3.")
+    p.add_argument("--success-window", type=int, default=600,
+                   help="fail_then_success: geriye bakma suresi (saniye). Varsayilan 600.")
+    p.add_argument("--anomaly-k", type=float, default=2.0,
+                   help="Anomali esigi (standart sapma katsayisi). Varsayilan 2.0.")
+    p.add_argument("--anomaly-min-volume", type=int, default=5,
+                   help="Anomali icin min. olay sayisi. Varsayilan 5.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir.")
     p.add_argument("--debug", action="store_true",
                    help="Flask debug modu (SADECE gelistirme). Varsayilan KAPALI.")
+    p.add_argument("--version", action="version", version=f"mini-siem-dashboard {__version__}")
     return p
 
 
@@ -139,9 +159,21 @@ def main() -> None:
             threshold=args.threshold,
             enum_threshold=args.enum_threshold,
             allowlist=args.allow,
+            min_fails=args.min_fails,
+            success_window=args.success_window,
+            anomaly_k=args.anomaly_k,
+            anomaly_min_volume=args.anomaly_min_volume,
         )
     except FileNotFoundError:
         print(f"HATA: dosya bulunamadi: {args.logfile}", file=sys.stderr)
+        sys.exit(2)
+    except OSError as exc:
+        # Dizin verilmesi, izin hatasi, bozuk cihaz... CLI bunlari zaten yakaliyordu;
+        # pano da traceback yerine net mesaj versin (iki arayuz ayni davransin).
+        print(f"HATA: dosya okunamadi: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except ValueError as exc:
+        print(f"HATA: gecersiz tespit ayari: {exc}", file=sys.stderr)
         sys.exit(2)
 
     app = create_app(store)

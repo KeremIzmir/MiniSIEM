@@ -16,6 +16,7 @@ Kullanim:
 """
 
 import argparse
+import re
 import sys
 from typing import List, Optional
 
@@ -23,6 +24,30 @@ from parser.auth_parser import parse_file
 from storage.store import EventStore
 from detection.engine import run_detections
 from detection.alert import Alert
+
+__version__ = "1.0.0"
+
+
+# Log satirlarindaki KONTROL KARAKTERLERI (C0/C1 + DEL).
+# NEDEN: Bir SIEM'in isledigi log satirlari saldirgan kontrolundedir — SSH'a
+# "Invalid user <ESC>[2J" gibi bir kullanici adiyla baglanmak yeterlidir. Bu ham
+# satiri kanit olarak dogrudan terminale basarsak saldirganin ANSI kacis dizileri
+# analistin ekraninda CALISIR: ekrani temizleyebilir, pencere basligini
+# degistirebilir, hatta onceki alarm satirlarini sahte metinle uzerine yazabilir.
+# Bu yuzden gosterimden HEMEN once kacislari zararsiz hale getiriyoruz (CWE-117).
+# Sekme haric tum C0 (0x00-0x1F), DEL (0x7F) ve C1 (0x80-0x9F) araligi.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _safe(text: str) -> str:
+    """
+    Kontrol karakterlerini gorunur bir yer tutucuyla degistirir.
+
+    Silmek yerine isaretliyoruz (\\xNN): kanitin bozuldugu belli olsun, analist
+    satirda gizli bayt oldugunu GORSUN. Ham hali --json ciktisinda korunur
+    (json.dumps kacislari zaten \\u001b olarak guvenle kodlar).
+    """
+    return _CONTROL_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 
 # ANSI renkleri: terminal destekliyorsa alarmlari severity'ye gore renklendir.
@@ -72,7 +97,8 @@ def _print_top_ips(store: EventStore, out, limit: int = 5) -> None:
         return
     print("\n=== EN COK OLAY URETEN IP'LER ===", file=out)
     for ip, count in rows:
-        print(f"  {ip:<18} {count} olay", file=out)
+        # IP alani regex'te \S+ oldugu icin log'dan gelen her sey olabilir -> temizle.
+        print(f"  {_safe(ip):<18} {count} olay", file=out)
 
 
 def _print_alerts(alerts: List[Alert], color: bool, out) -> None:
@@ -87,16 +113,17 @@ def _print_alerts(alerts: List[Alert], color: bool, out) -> None:
         head = f"[{sev.upper():^6}] {a.rule_name}"
         print(_color(head, sev, color), file=out)
         if a.source_ip:
-            print(f"    IP        : {a.source_ip}", file=out)
+            print(f"    IP        : {_safe(a.source_ip)}", file=out)
         print(f"    Olay sayisi: {a.count}", file=out)
         if a.time_window:
             print(f"    Zaman     : {a.time_window}", file=out)
-        print(f"    Aciklama  : {a.description}", file=out)
+        # Aciklama da log'dan gelen kullanici adi/IP icerebilir -> temizle.
+        print(f"    Aciklama  : {_safe(a.description)}", file=out)
         if a.evidence:
             # Kanit satirlarini soluk renkle, en fazla 3 tane goster (taban gurultu olmasin).
             print("    Kanit     :", file=out)
             for line in a.evidence[:3]:
-                print(_color(f"      | {line}", "dim", color), file=out)
+                print(_color(f"      | {_safe(line)}", "dim", color), file=out)
             if len(a.evidence) > 3:
                 print(_color(f"      | ... (+{len(a.evidence) - 3} satir daha)", "dim", color), file=out)
         print("", file=out)
@@ -117,12 +144,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Brute-force esigi (pencere icindeki basarisiz deneme). Varsayilan 5.")
     p.add_argument("--enum-threshold", type=int, default=5,
                    help="Enumeration esigi (bir IP'nin denedigi farkli kullanici sayisi). Varsayilan 5.")
+    p.add_argument("--min-fails", type=int, default=3,
+                   help="fail_then_success: basariyi suheli yapan min. basarisizlik. Varsayilan 3.")
+    p.add_argument("--success-window", type=int, default=600,
+                   help="fail_then_success: basaridan geriye bakma suresi (saniye). Varsayilan 600.")
+    p.add_argument("--anomaly-k", type=float, default=2.0,
+                   help="Anomali esigi: kac standart sapma ustu aykiri sayilsin. Varsayilan 2.0.")
+    p.add_argument("--anomaly-min-volume", type=int, default=5,
+                   help="Anomali icin gereken min. mutlak olay sayisi. Varsayilan 5.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir.")
     p.add_argument("--quiet", action="store_true",
                    help="Sadece alarmlari goster; ozet ve IP tablosunu atla.")
     p.add_argument("--no-color", action="store_true",
                    help="ANSI renklerini kapat (renkli terminalde bile).")
+    p.add_argument("--version", action="version", version=f"mini-siem {__version__}")
     return p
 
 
@@ -154,13 +190,23 @@ def run(argv: Optional[List[str]] = None, out=sys.stdout) -> int:
     store.unparsed_count = len(unparsed)
 
     # --- 3) Tespit: tum kurallari calistir (engine siralamayi yapar) ---
-    alerts = run_detections(
-        events,
-        window=args.window,
-        threshold=args.threshold,
-        enum_threshold=args.enum_threshold,
-        allowlist=args.allow,
-    )
+    try:
+        alerts = run_detections(
+            events,
+            window=args.window,
+            threshold=args.threshold,
+            enum_threshold=args.enum_threshold,
+            allowlist=args.allow,
+            min_fails=args.min_fails,
+            success_window=args.success_window,
+            anomaly_k=args.anomaly_k,
+            anomaly_min_volume=args.anomaly_min_volume,
+        )
+    except ValueError as exc:
+        # Kurallar anlamsiz esikleri (negatif pencere, threshold<1) reddeder.
+        # Bunu traceback olarak degil, kullanim hatasi olarak bildiririz.
+        print(f"HATA: gecersiz tespit ayari: {exc}", file=sys.stderr)
+        return 2
     for a in alerts:
         store.add_alert(a)
 

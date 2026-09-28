@@ -27,17 +27,30 @@ def run_detections(
     threshold: int = 5,
     enum_threshold: int = 5,
     allowlist: Optional[List[str]] = None,
+    min_fails: int = 3,
+    success_window: int = 600,
+    anomaly_k: float = 2.0,
+    anomaly_min_volume: int = 5,
 ) -> List[Alert]:
     """
     Tum tespit kurallarini calistirir ve alarmlari severity + count'a gore siralar.
 
     Parametreler:
-        events        : islenecek olay listesi.
-        window        : brute-force kayan pencere genisligi (saniye).
-        threshold     : brute-force esigi.
-        enum_threshold: enumeration esigi (farkli kullanici sayisi).
-        allowlist     : guvenilir IP'ler. Bu IP'lerden gelen olaylar tespitten
-                        ONCE elenir (guvenilir kaynaklar yanlis alarm uretmesin).
+        events            : islenecek olay listesi.
+        window            : brute-force kayan pencere genisligi (saniye).
+        threshold         : brute-force esigi.
+        enum_threshold    : enumeration esigi (farkli kullanici sayisi).
+        allowlist         : guvenilir IP'ler. Bu IP'lerden gelen olaylar tespitten
+                            ONCE elenir (guvenilir kaynaklar yanlis alarm uretmesin).
+        min_fails         : fail_then_success icin min. basarisizlik sayisi.
+        success_window    : fail_then_success icin basaridan geriye bakma suresi (sn).
+        anomaly_k         : anomali esigi (kac standart sapma ustu).
+        anomaly_min_volume: anomali icin min. mutlak olay sayisi.
+
+    NEDEN HEPSI BURADA: Eskiden yalnizca brute-force ve enumeration ayarlanabiliyordu;
+    fail_then_success ve anomaly kendi varsayilanlarina kilitliydi — yani o kurallarin
+    parametreleri disaridan ERISILEMEZDI. Motor tum kurallarin ayarlarini gecirir ki
+    CLI ve pano ayni ayar yuzeyini sunabilsin.
 
     Donus: severity.rank'a gore AZALAN (high once), esitlikte count'a gore azalan
            sirali Alert listesi.
@@ -54,8 +67,10 @@ def run_detections(
     alerts: List[Alert] = []
     alerts.extend(detect_brute_force(filtered_events, window=window, threshold=threshold))
     alerts.extend(detect_enumeration(filtered_events, threshold=enum_threshold))
-    alerts.extend(detect_fail_then_success(filtered_events))
-    alerts.extend(detect_anomalous_ips(filtered_events))
+    alerts.extend(detect_fail_then_success(
+        filtered_events, min_fails=min_fails, window=success_window))
+    alerts.extend(detect_anomalous_ips(
+        filtered_events, k=anomaly_k, min_volume=anomaly_min_volume))
 
     # Severity.rank ile siralama: alfabetik string sirasi yanlis olurdu
     # ("high" < "low"), bu yuzden sayisal rank kullaniriz. Negatif -> azalan.
