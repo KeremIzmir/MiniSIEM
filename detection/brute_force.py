@@ -8,18 +8,15 @@ onlarca "Failed password" gelir. Bunu "kayan zaman penceresi" (sliding window) i
 yakalariz: "herhangi bir 'window' saniyelik aralikta ayni IP'den >= threshold
 basarisizlik var mi?"
 
-SLIDING WINDOW NASIL CALISIR (iki isaretci / two-pointer):
-  - IP'nin basarisiz olaylarini zamana gore sirala.
-  - 'left' ve 'right' iki isaretci. right'i ileri kaydirirken, pencere genisligi
-    (ts[right] - ts[left]) 'window'u asarsa left'i ileri it.
-  - Boylece her an [left..right] araligi en fazla 'window' saniyelik bir penceredir.
-  - Bu penceredeki olay sayisinin gordugumuz EN BUYUK degerini tutariz.
-  - Bu maksimum >= threshold ise alarm uretiriz.
-Bu yontem O(n): her olay pencereye bir kez girer, bir kez cikar.
+SLIDING WINDOW: En yogun pencereyi ortak iki isaretcili (two-pointer) secici bulur
+(detection/sliding_window.py; ayrintili aciklama orada). Pencere KAPSAYICIDIR ve
+esit yogunlukta ILK pencere kazanir. Bu kural o penceredeki olay sayisi
+>= threshold ise alarm uretir.
 """
 
 from parser.events import Event, EventType
 from detection.alert import Alert, Severity
+from detection.sliding_window import densest_window
 
 
 def detect_brute_force(
@@ -57,30 +54,15 @@ def detect_brute_force(
 
     # 2) Her IP icin kayan pencereyi uygula.
     for ip, ip_events in by_ip.items():
-        ip_events.sort(key=lambda ev: ev.timestamp)  # two-pointer sirali veri ister
-        times = [ev.timestamp.timestamp() for ev in ip_events]  # epoch saniye
-
-        left = 0
-        best_count = 0
-        best_left = best_right = 0  # en yogun pencerenin sinirlari (kanit icin)
-
-        for right in range(len(times)):
-            # Pencere 'window'u astiysa sol kenari ileri it.
-            # 'left < right' korumasi: pencere tek olayin altina INEMEZ. Bu olmadan
-            # patolojik yapilandirmalarda left, right'i gecip listeyi tasardi.
-            while left < right and times[right] - times[left] > window:
-                left += 1
-            current = right - left + 1
-            if current > best_count:
-                best_count = current
-                best_left, best_right = left, right
+        # En yogun pencere (kronolojik); kanit ve sayim bu pencereden gelir.
+        window_events = densest_window(ip_events, window)
+        best_count = len(window_events)
 
         # 3) Esik asildiysa alarm uret.
         if best_count >= threshold:
-            window_events = ip_events[best_left : best_right + 1]
             start = window_events[0].timestamp.strftime("%H:%M:%S")
             end = window_events[-1].timestamp.strftime("%H:%M:%S")
-            span = int(times[best_right] - times[best_left])
+            span = int(window_events[-1].timestamp.timestamp() - window_events[0].timestamp.timestamp())
 
             # Severity: cok asilirsa daha yuksek. 3x threshold ustu -> high.
             if best_count >= threshold * 3:

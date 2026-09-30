@@ -21,10 +21,10 @@ NE SAYILIR: Parser'in tanidigi birincil SU_FAILURE olaylari. pam_unix, ayni PAM 
 ek hatalari "N more authentication failures" ozetiyle yazabilir; bu satirlar sayilmaz.
 Yani kural tek tek parola istemlerini degil, taninan basarisizlik olaylarini sayar.
 
-ALGORITMA: brute_force.py ile ayni iki isaretcili kayan pencere (ayrintili aciklama orada).
-Pencere KAPSAYICIDIR: iki olay arasindaki fark tam 'window' saniye ise ayni penceredeler.
-Ortak bir yardimciya bilincli olarak cikarilmadi — calisan kurallari bir ozellik PR'inda
-degistirmemek icin; bu ayri bir refactor konusu.
+ALGORITMA: En yogun pencereyi ortak iki isaretcili (two-pointer) secici bulur
+(detection/sliding_window.py; ayrintili aciklama orada). Pencere KAPSAYICIDIR: iki olay
+arasindaki fark tam 'window' saniye ise ayni penceredeler. Esit yogunlukta ILK pencere
+kazanir.
 
 IP ALLOWLIST: Engine'in --allow filtresi source_ip'e bakar. Tipik yerel su olayinda IP
 yoktur, bu yuzden bu olaylar allowlist'ten etkilenmez. Olayda gercekten bir kaynak IP
@@ -33,6 +33,7 @@ varsa (rhost dolu) mevcut engine on-filtresi gecerlidir.
 
 from parser.events import Event, EventType
 from detection.alert import Alert, Severity
+from detection.sliding_window import densest_window
 
 # Aciklamada gosterilecek en fazla hedef sayisi. Kullanici adlari log'dan gelir
 # (saldirgan kontrolunde olabilir); sinir, alarm metninin sinirsiz buyumesini onler.
@@ -85,30 +86,17 @@ def detect_su_brute_force(
         if e.event_type == EventType.SU_FAILURE and e.actor_username:
             groups.setdefault((e.host, e.actor_username), []).append(e)
 
-    # 2) Her grup icin kayan pencere (girdi sirasina guvenmeyiz -> once sirala).
+    # 2) Her grup icin en yogun kayan pencere (ortak secici girdi sirasina guvenmez).
     for (host, actor), group in groups.items():
-        group.sort(key=lambda ev: ev.timestamp)
-        times = [ev.timestamp.timestamp() for ev in group]
-
-        left = 0
-        best_count = 0
-        best_left = best_right = 0  # en yogun pencerenin sinirlari (kanit ve hedefler icin)
-
-        for right in range(len(times)):
-            # '> window' iken daralt: fark tam 'window' ise olay pencerede kalir (kapsayici).
-            while left < right and times[right] - times[left] > window:
-                left += 1
-            current = right - left + 1
-            if current > best_count:
-                best_count = current
-                best_left, best_right = left, right
+        # En yogun kapsayici pencere (kronolojik); kanit, sayim ve hedefler bu pencereden gelir.
+        window_events = densest_window(group, window)
+        best_count = len(window_events)
 
         # 3) Esik asildiysa grup basina tek alarm.
         if best_count >= threshold:
-            window_events = group[best_left : best_right + 1]
             start = window_events[0].timestamp.strftime("%H:%M:%S")
             end = window_events[-1].timestamp.strftime("%H:%M:%S")
-            span = int(times[best_right] - times[best_left])
+            span = int(window_events[-1].timestamp.timestamp() - window_events[0].timestamp.timestamp())
             sev = Severity.HIGH if best_count >= threshold * 2 else Severity.MEDIUM
 
             alerts.append(
