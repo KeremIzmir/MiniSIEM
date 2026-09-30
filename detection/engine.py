@@ -7,9 +7,6 @@ NEDEN BOYLE: CLI ve dashboard, hangi kurallarin oldugunu bilmek zorunda kalmasin
 Ikisi de run_detections_with_config(events, config) cagirir; yeni kural eklemek =
 burada bir satir eklemek. Ayarlar detection/config.py'deki DetectionConfig'te durur.
 Is mantigi tek yerde toplanir (dashboard onu tekrarlamaz).
-
-Bu dosya, qwen3-coder:30b tarafindan uretilen mantigin uzerine modul docstring'i
-ve aciklayici yorumlar eklenmis halidir (ham cikti: logs/ollama_outputs/engine.py.raw).
 """
 
 from typing import List, Optional

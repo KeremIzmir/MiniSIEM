@@ -24,14 +24,9 @@ _*.json
 
 # Ajan pipeline'inin calisma durumu ve oturum logu: calisilan makinenin yerel
 # mutlak yolunu icerir, repoya ait degildir. Dar kalip: logs/ altindaki diger
-# kayitlar (ollama_outputs/) ve ileride eklenebilecek ornek loglar etkilenmez.
+# kayitlar ve ileride eklenebilecek ornek loglar etkilenmez.
 pipeline_state.json
 logs/pipeline_*.log
-
-# NOT: logs/ollama_outputs/, context_store.json, dependency_graph.json ve
-# pipeline_raporu.json BILINCLI OLARAK depoda tutulur — bunlar projenin nasil
-# insa edildigini belgeleyen surec kayitlaridir (README "Gelistirme" bolumu ve
-# detection/engine.py docstring'i bunlara atif yapar). Cikti degil, kaynaktirlar.
 
 # Editor / OS
 .vscode/
