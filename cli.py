@@ -158,9 +158,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sudo-threshold", type=int, default=3,
                    help="sudo_brute_force: pencerede alarm icin min. basarisiz sudo sayisi. "
                         "Varsayilan 3.")
+    p.add_argument("--su-window", type=int, default=300,
+                   help="su_brute_force: ayni host+aktor basarisiz su penceresi (saniye). "
+                        "Varsayilan 300.")
+    p.add_argument("--su-threshold", type=int, default=3,
+                   help="su_brute_force: pencerede alarm icin min. basarisiz su sayisi. "
+                        "Varsayilan 3.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
-                        "Yalnizca ag kaynakli olaylari etkiler; yerel sudo alarmlarini bastirmaz.")
+                        "Yalnizca kaynak IP'si olan olaylari etkiler; yerel sudo/su alarmlarini bastirmaz.")
     p.add_argument("--quiet", action="store_true",
                    help="Sadece alarmlari goster; ozet ve IP tablosunu atla.")
     p.add_argument("--no-color", action="store_true",
@@ -210,6 +216,8 @@ def run(argv: Optional[List[str]] = None, out=sys.stdout) -> int:
             anomaly_min_volume=args.anomaly_min_volume,
             sudo_window=args.sudo_window,
             sudo_threshold=args.sudo_threshold,
+            su_window=args.su_window,
+            su_threshold=args.su_threshold,
         )
     except ValueError as exc:
         # Kurallar anlamsiz esikleri (negatif pencere, threshold<1) reddeder.

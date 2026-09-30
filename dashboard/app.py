@@ -53,6 +53,8 @@ def build_store(
     anomaly_min_volume: int = 5,
     sudo_window: int = 300,
     sudo_threshold: int = 3,
+    su_window: int = 300,
+    su_threshold: int = 3,
 ) -> EventStore:
     """
     Log dosyasini parse edip tum kurallari calistirir ve dolu bir EventStore dondurur.
@@ -78,6 +80,8 @@ def build_store(
         anomaly_min_volume=anomaly_min_volume,
         sudo_window=sudo_window,
         sudo_threshold=sudo_threshold,
+        su_window=su_window,
+        su_threshold=su_threshold,
     )
     for a in alerts:
         store.add_alert(a)
@@ -148,9 +152,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="sudo_brute_force: ayni host+kullanici penceresi (saniye). Varsayilan 300.")
     p.add_argument("--sudo-threshold", type=int, default=3,
                    help="sudo_brute_force: min. basarisiz sudo sayisi. Varsayilan 3.")
+    p.add_argument("--su-window", type=int, default=300,
+                   help="su_brute_force: ayni host+aktor penceresi (saniye). Varsayilan 300.")
+    p.add_argument("--su-threshold", type=int, default=3,
+                   help="su_brute_force: min. basarisiz su sayisi. Varsayilan 3.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
-                        "Yerel sudo alarmlarini bastirmaz.")
+                        "Yerel sudo/su alarmlarini bastirmaz.")
     p.add_argument("--debug", action="store_true",
                    help="Flask debug modu (SADECE gelistirme). Varsayilan KAPALI.")
     p.add_argument("--version", action="version", version=f"mini-siem-dashboard {__version__}")
@@ -174,6 +182,8 @@ def main() -> None:
             anomaly_min_volume=args.anomaly_min_volume,
             sudo_window=args.sudo_window,
             sudo_threshold=args.sudo_threshold,
+            su_window=args.su_window,
+            su_threshold=args.su_threshold,
         )
     except FileNotFoundError:
         print(f"HATA: dosya bulunamadi: {args.logfile}", file=sys.stderr)

@@ -244,3 +244,48 @@ def test_main_invalid_sudo_config_exits_2(monkeypatch, capsys, flag, value):
         app_module.main()
     assert exc.value.code == 2
     assert "gecersiz tespit ayari" in capsys.readouterr().err
+
+
+# ------------------------------- su_brute_force ------------------------------ #
+def test_arg_parser_su_defaults_and_overrides():
+    args = build_arg_parser().parse_args(["auth.log"])
+    assert (args.su_window, args.su_threshold) == (300, 3)
+    args = build_arg_parser().parse_args(["auth.log", "--su-window", "60", "--su-threshold", "5"])
+    assert (args.su_window, args.su_threshold) == (60, 5)
+
+
+def _su_log(tmp_path):
+    p = tmp_path / "su.log"
+    p.write_text("".join(
+        f"Jun  1 05:55:{i * 5:02d} web-01 su: pam_unix(su:auth): authentication failure; "
+        f"logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user={t}\n"
+        for i, t in enumerate(["root", "postgres", "deploy"])), encoding="utf-8")
+    return p
+
+
+def test_build_store_su_rule_and_parameters(tmp_path):
+    log = str(_su_log(tmp_path))
+    rules = lambda s: [a["rule_name"] for a in s.alerts]
+    assert rules(build_store(log)).count("su_brute_force") == 1
+    assert "su_brute_force" not in rules(build_store(log, su_threshold=4))
+    assert "su_brute_force" not in rules(build_store(log, su_window=9))    # 0..10s -> 10s gerekir
+
+
+def test_build_store_matches_cli_for_su(tmp_path):
+    # Iki arayuz ayni ayarlarla ayni alarmlari uretmeli (parite).
+    import cli
+    log = _su_log(tmp_path)
+    out_json = tmp_path / "c.json"
+    cli.run([str(log), "--quiet", "--json", str(out_json), "--su-threshold", "2"], out=__import__("io").StringIO())
+    cli_alerts = json.loads(out_json.read_text(encoding="utf-8"))["alerts"]
+    assert build_store(str(log), su_threshold=2).alerts == cli_alerts
+
+
+@pytest.mark.parametrize("flag,value", [("--su-threshold", "0"), ("--su-window", "-1")])
+def test_main_invalid_su_config_exits_2(monkeypatch, capsys, tmp_path, flag, value):
+    from dashboard import app as app_module
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", str(_su_log(tmp_path)), flag, value])
+    with pytest.raises(SystemExit) as exc:
+        app_module.main()
+    assert exc.value.code == 2
+    assert "gecersiz tespit ayari" in capsys.readouterr().err

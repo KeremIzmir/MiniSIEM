@@ -142,3 +142,47 @@ def test_sort_is_stable_by_severity_then_count():
     keys = [(-a.severity.rank, -a.count) for a in alerts]
     assert keys == sorted(keys)
     assert alerts[0].severity == _Sev.HIGH
+
+
+def _su_events(n=3, step=10, actor="alice", ip=None, targets=("root",)):
+    """Ayni host+aktorden 'step' saniye arayla n SU_FAILURE (hedefler dongusel)."""
+    out = []
+    for i in range(n):
+        e = make_event(offset=i * step, event_type=EventType.SU_FAILURE, ip=ip,
+                       user=targets[i % len(targets)], process="su")
+        e.actor_username = actor
+        out.append(e)
+    return out
+
+
+def test_su_rule_runs_with_defaults():
+    assert "su_brute_force" in _rules(run_detections(_su_events(3)))
+
+
+def test_su_threshold_reaches_rule():
+    assert "su_brute_force" not in _rules(run_detections(_su_events(3), su_threshold=4))
+
+
+def test_su_window_reaches_rule():
+    events = _su_events(3, step=10)                   # toplam 20s
+    assert "su_brute_force" in _rules(run_detections(events, su_window=20))
+    assert "su_brute_force" not in _rules(run_detections(events, su_window=19))
+
+
+@pytest.mark.parametrize("kwargs", [{"su_threshold": 0}, {"su_window": -1}])
+def test_invalid_su_config_propagates_as_valueerror(kwargs):
+    with pytest.raises(ValueError):
+        run_detections([], **kwargs)
+
+
+def test_local_su_events_survive_ip_allowlist():
+    # Tipik yerel su: source_ip None -> IP allowlist bu olaylari suzemez.
+    alerts = run_detections(_su_events(3), allowlist=["192.0.2.1", "198.51.100.5"])
+    assert "su_brute_force" in _rules(alerts)
+
+
+def test_su_events_with_real_source_ip_follow_existing_allowlist():
+    # Olayda gercekten bir kaynak IP varsa engine on-filtresi (mevcut davranis) gecerlidir.
+    events = _su_events(3, ip="198.51.100.5")
+    assert "su_brute_force" in _rules(run_detections(events))
+    assert "su_brute_force" not in _rules(run_detections(events, allowlist=["198.51.100.5"]))
