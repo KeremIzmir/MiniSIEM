@@ -227,5 +227,4 @@ MIT — bkz. [LICENSE](LICENSE).
 
 ## Geliştirme
 
-Bu proje, bir Claude Code + Ollama ajan pipeline'ı ile dosya dosya inşa edildi. Süreç kayıtları bilinçli olarak depoda tutulur:
-`logs/`, `context_store.json`, `dependency_graph.json`, `pipeline_raporu.json`.
+İlk sürüm yapay zekâ destekli bir geliştirme akışıyla oluşturuldu; tarihsel kayıtlar ve projenin sonraki gelişimi Git geçmişinde izlenebilir.
