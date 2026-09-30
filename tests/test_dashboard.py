@@ -289,3 +289,54 @@ def test_main_invalid_su_config_exits_2(monkeypatch, capsys, tmp_path, flag, val
         app_module.main()
     assert exc.value.code == 2
     assert "gecersiz tespit ayari" in capsys.readouterr().err
+
+
+# --------------------------- su_fail_then_success ---------------------------- #
+def _su_seq_log(tmp_path):
+    p = tmp_path / "seq.log"
+    fails = "".join(
+        f"Jun  1 05:55:{i * 5:02d} web-01 su: pam_unix(su:auth): authentication failure; "
+        f"logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user=root\n" for i in range(3))
+    p.write_text(fails + "Jun  1 05:55:40 web-01 su[4242]: (to root) alice on pts/0\n", encoding="utf-8")
+    return p
+
+
+def test_arg_parser_su_success_defaults_and_overrides():
+    args = build_arg_parser().parse_args(["auth.log"])
+    assert (args.su_success_min_fails, args.su_success_window) == (3, 600)
+    args = build_arg_parser().parse_args(["auth.log", "--su-success-min-fails", "5", "--su-success-window", "60"])
+    assert (args.su_success_min_fails, args.su_success_window) == (5, 60)
+
+
+def test_build_store_su_fail_then_success_and_parameters(tmp_path):
+    log = str(_su_seq_log(tmp_path))
+    rules = lambda s: [a["rule_name"] for a in s.alerts]
+    assert rules(build_store(log)).count("su_fail_then_success") == 1
+    assert "su_fail_then_success" not in rules(build_store(log, su_success_min_fails=4))
+    assert "su_fail_then_success" not in rules(build_store(log, su_success_window=39))   # ilk basarisizlik 40s geride
+
+
+def test_api_alerts_serialize_su_fail_then_success(tmp_path):
+    app = create_app(build_store(str(_su_seq_log(tmp_path))))
+    data = app.test_client().get("/api/alerts").get_json()
+    fts = [a for a in data if a["rule_name"] == "su_fail_then_success"]
+    assert len(fts) == 1 and fts[0]["severity"] == "high" and fts[0]["source_ip"] is None
+
+
+def test_build_store_matches_cli_for_su_fail_then_success(tmp_path):
+    import io
+    import cli
+    log = _su_seq_log(tmp_path)
+    out_json = tmp_path / "c.json"
+    cli.run([str(log), "--quiet", "--json", str(out_json)], out=io.StringIO())
+    assert build_store(str(log)).alerts == json.loads(out_json.read_text(encoding="utf-8"))["alerts"]
+
+
+@pytest.mark.parametrize("flag,value", [("--su-success-min-fails", "0"), ("--su-success-window", "-1")])
+def test_main_invalid_su_success_config_exits_2(monkeypatch, capsys, tmp_path, flag, value):
+    from dashboard import app as app_module
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", str(_su_seq_log(tmp_path)), flag, value])
+    with pytest.raises(SystemExit) as exc:
+        app_module.main()
+    assert exc.value.code == 2
+    assert "gecersiz tespit ayari" in capsys.readouterr().err
