@@ -369,3 +369,94 @@ def test_event_to_dict_includes_actor_username():
     assert d["actor_username"] == "alice"
     assert d["event_type"] == "SU_FAILURE"
     assert d["username"] == "root"
+
+
+# --- SU_SUCCESS: util-linux su'nun basari kaydi "(to <hedef>) <aktor> on <tty>" -- #
+# Tek (kanonik) basari kaynagi budur. PAM "session opened/closed" ve "FAILED SU"
+# satirlari BILINCLI olarak UNKNOWN kalir (cift sayim ve farkli aktor kaynagi).
+
+_SU_OK = "Jun  1 05:55:10 web-01 {proc}: {body}"
+
+
+def test_su_success_record_classified():
+    e = parse_line(_SU_OK.format(proc="su[1234]", body="(to root) alice on pts/0"), now=NOW)
+    assert e.event_type == EventType.SU_SUCCESS
+    assert e.process == "su"
+    assert e.username == "root"               # hedef
+    assert e.actor_username == "alice"        # aktor
+    assert e.source_ip is None and e.port is None
+    assert e.is_success is True
+    assert e.is_failure is False
+
+
+def test_su_success_non_root_target():
+    e = parse_line(_SU_OK.format(proc="su[1234]", body="(to postgres) alice on pts/1"), now=NOW)
+    assert (e.event_type, e.username, e.actor_username) == (EventType.SU_SUCCESS, "postgres", "alice")
+
+
+def test_su_success_terminal_none():
+    e = parse_line(_SU_OK.format(proc="su[1234]", body="(to root) alice on none"), now=NOW)
+    assert e.event_type == EventType.SU_SUCCESS
+
+
+def test_su_success_empty_actor_is_none():
+    # util-linux aktoru bos yazarsa ayiriciler arasinda iki bosluk kalir.
+    e = parse_line(_SU_OK.format(proc="su[1234]", body="(to root)  on pts/0"), now=NOW)
+    assert e.event_type == EventType.SU_SUCCESS
+    assert e.username == "root"
+    assert e.actor_username is None
+
+
+def test_su_success_without_pid_header():
+    e = parse_line(_SU_OK.format(proc="su", body="(to root) alice on pts/0"), now=NOW)
+    assert (e.event_type, e.process) == (EventType.SU_SUCCESS, "su")
+
+
+@pytest.mark.parametrize("body", [
+    "(to ) alice on pts/0",              # hedef bos
+    "(to root) alice pts/0",             # 'on' yok
+    "(to root) alice on pts/0 extra",    # sonda fazlalik
+    "to root alice on pts/0",            # parantez yok
+])
+def test_malformed_su_success_record_stays_unknown(body):
+    e = parse_line(_SU_OK.format(proc="su[1234]", body=body), now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+
+
+@pytest.mark.parametrize("body", [
+    "FAILED SU (to root) alice on pts/0",
+    "pam_unix(su:session): session opened for user root(uid=0) by alice(uid=1000)",
+    "pam_unix(su-l:session): session opened for user root(uid=0) by alice(uid=1000)",
+    "pam_unix(su:session): session closed for user root",
+])
+def test_non_canonical_su_records_stay_unknown(body):
+    e = parse_line(_SU_OK.format(proc="su[1234]", body=body), now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+    assert not e.is_success and not e.is_failure
+
+
+@pytest.mark.parametrize("proc", ["runuser[77]", "sshd[1]", "login[9]"])
+def test_success_body_from_other_process_is_not_su_success(proc):
+    e = parse_line(_SU_OK.format(proc=proc, body="(to root) alice on pts/0"), now=NOW)
+    assert e.event_type != EventType.SU_SUCCESS
+    assert e.event_type == EventType.UNKNOWN
+
+
+def test_su_l_pam_failure_is_already_su_failure():
+    # util-linux 'su -l': PAM servisi su-l, dis syslog etiketi yine 'su'.
+    line = ("Jun  1 05:55:00 web-01 su[1234]: pam_unix(su-l:auth): authentication failure; "
+            "logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user=root")
+    e = parse_line(line, now=NOW)
+    assert (e.event_type, e.process, e.username, e.actor_username) == (
+        EventType.SU_FAILURE, "su", "root", "alice")
+
+
+def test_su_success_to_dict():
+    d = parse_line(_SU_OK.format(proc="su[1234]", body="(to root) alice on pts/0"), now=NOW).to_dict()
+    assert (d["event_type"], d["username"], d["actor_username"]) == ("SU_SUCCESS", "root", "alice")
+
+
+def test_accepted_login_is_still_success():
+    line = "Jun  1 05:54:00 web-01 sshd[12400]: Accepted password for alice from 198.51.100.5 port 60050 ssh2"
+    e = parse_line(line, now=NOW)
+    assert e.is_success and not e.is_failure

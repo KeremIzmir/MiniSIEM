@@ -186,3 +186,60 @@ def test_su_events_with_real_source_ip_follow_existing_allowlist():
     events = _su_events(3, ip="198.51.100.5")
     assert "su_brute_force" in _rules(run_detections(events))
     assert "su_brute_force" not in _rules(run_detections(events, allowlist=["198.51.100.5"]))
+
+
+def _su_seq(n_fail=3, ip=None, actor="alice", target="root"):
+    """n basarisiz su (aktor/hedef ayni) + 10s sonra basarili su gecisi."""
+    out = []
+    for i in range(n_fail + 1):
+        kind = EventType.SU_FAILURE if i < n_fail else EventType.SU_SUCCESS
+        e = make_event(offset=i * 10, event_type=kind, ip=ip if kind == EventType.SU_FAILURE else None,
+                       user=target, process="su")
+        e.actor_username = actor
+        out.append(e)
+    return out
+
+
+def test_su_fail_then_success_runs_with_defaults():
+    alerts = run_detections(_su_seq(3))
+    assert "su_fail_then_success" in _rules(alerts)
+    assert "su_brute_force" in _rules(alerts)       # ayni dizi: farkli iki anlam, ikisi de beklenir
+
+
+def test_su_success_min_fails_reaches_rule():
+    assert "su_fail_then_success" not in _rules(run_detections(_su_seq(3), su_success_min_fails=4))
+
+
+def test_su_success_window_reaches_rule():
+    # basarisizliklar 0/10/20, basari 30: ilk basarisizlik 30s geride.
+    assert "su_fail_then_success" in _rules(run_detections(_su_seq(3), su_success_window=30))
+    assert "su_fail_then_success" not in _rules(run_detections(_su_seq(3), su_success_window=29))
+
+
+@pytest.mark.parametrize("kwargs", [{"su_success_min_fails": 0}, {"su_success_window": -1}])
+def test_invalid_su_success_config_propagates(kwargs):
+    with pytest.raises(ValueError):
+        run_detections([], **kwargs)
+
+
+def test_local_su_sequence_survives_ip_allowlist():
+    alerts = run_detections(_su_seq(3), allowlist=["192.0.2.1"])
+    assert "su_fail_then_success" in _rules(alerts)
+
+
+def test_allowlisted_rhost_failures_are_prefiltered():
+    # Basarisizliklarda gercek rhost var ve allowlist'te: engine on-filtresi onlari eler,
+    # basari (IP'siz) kalir -> sayim esigin altina duser, korelasyon yok (kacan alarm).
+    events = _su_seq(3, ip="198.51.100.5")
+    assert "su_fail_then_success" in _rules(run_detections(events))
+    assert "su_fail_then_success" not in _rules(run_detections(events, allowlist=["198.51.100.5"]))
+
+
+def test_network_fail_then_success_ignores_su_success():
+    # SU_SUCCESS is_success=True olsa da ag kurali olay turu listesi nedeniyle onu almaz.
+    from detection.fail_then_success import detect_fail_then_success
+    events = _su_seq(3, ip="192.0.2.9")
+    events[-1].source_ip = "192.0.2.9"               # basariya IP versek bile girmemeli
+    assert events[-1].is_success
+    assert detect_fail_then_success(events) == []
+    assert "fail_then_success" not in _rules(run_detections(events))

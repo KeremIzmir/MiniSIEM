@@ -164,6 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--su-threshold", type=int, default=3,
                    help="su_brute_force: pencerede alarm icin min. basarisiz su sayisi. "
                         "Varsayilan 3.")
+    p.add_argument("--su-success-min-fails", type=int, default=3,
+                   help="su_fail_then_success: basarili su gecisinden onceki min. basarisiz su "
+                        "(ayni host+aktor+hedef). Varsayilan 3.")
+    p.add_argument("--su-success-window", type=int, default=600,
+                   help="su_fail_then_success: basaridan geriye bakma suresi (saniye). "
+                        "Varsayilan 600.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
                         "Yalnizca kaynak IP'si olan olaylari etkiler; yerel sudo/su alarmlarini bastirmaz.")
@@ -218,6 +224,8 @@ def run(argv: Optional[List[str]] = None, out=sys.stdout) -> int:
             sudo_threshold=args.sudo_threshold,
             su_window=args.su_window,
             su_threshold=args.su_threshold,
+            su_success_min_fails=args.su_success_min_fails,
+            su_success_window=args.su_success_window,
         )
     except ValueError as exc:
         # Kurallar anlamsiz esikleri (negatif pencere, threshold<1) reddeder.

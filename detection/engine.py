@@ -21,6 +21,7 @@ from detection.fail_then_success import detect_fail_then_success
 from detection.anomaly import detect_anomalous_ips
 from detection.sudo_brute_force import detect_sudo_brute_force
 from detection.su_brute_force import detect_su_brute_force
+from detection.su_fail_then_success import detect_su_fail_then_success
 
 
 def run_detections(
@@ -37,6 +38,8 @@ def run_detections(
     sudo_threshold: int = 3,
     su_window: int = 300,
     su_threshold: int = 3,
+    su_success_min_fails: int = 3,
+    su_success_window: int = 600,
 ) -> List[Alert]:
     """
     Tum tespit kurallarini calistirir ve alarmlari severity + count'a gore siralar.
@@ -59,6 +62,8 @@ def run_detections(
         sudo_threshold    : sudo_brute_force esigi (ayni host+kullanici basarisiz sudo sayisi).
         su_window         : su_brute_force kayan pencere genisligi (saniye).
         su_threshold      : su_brute_force esigi (ayni host+aktor basarisiz su sayisi).
+        su_success_min_fails: su_fail_then_success icin basaridan onceki min. basarisizlik.
+        su_success_window : su_fail_then_success icin basaridan geriye bakma suresi (sn).
 
     NEDEN HEPSI BURADA: Eskiden yalnizca brute-force ve enumeration ayarlanabiliyordu;
     fail_then_success ve anomaly kendi varsayilanlarina kilitliydi — yani o kurallarin
@@ -88,6 +93,8 @@ def run_detections(
         filtered_events, window=sudo_window, threshold=sudo_threshold))
     alerts.extend(detect_su_brute_force(
         filtered_events, window=su_window, threshold=su_threshold))
+    alerts.extend(detect_su_fail_then_success(
+        filtered_events, min_fails=su_success_min_fails, window=su_success_window))
 
     # Severity.rank ile siralama: alfabetik string sirasi yanlis olurdu
     # ("high" < "low"), bu yuzden sayisal rank kullaniriz. Negatif -> azalan.

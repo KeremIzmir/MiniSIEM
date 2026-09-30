@@ -102,6 +102,18 @@ _PAM_RE = re.compile(r"authentication failure;(?P<fields>.*)$")
 _PAM_FIELD_RE = re.compile(r"(?<!\S)(?P<key>\w+)=(?P<value>\S*)")
 
 
+# util-linux su'nun BASARI kaydi (tek kanonik basari kaynagi):
+#   "(to root) alice on pts/0"   ->  hedef=root, aktor=alice, tty=pts/0
+#   "(to root)  on pts/0"        ->  aktor bos (iki bosluk) -> None
+# util-linux bu satiri pam_authenticate, pam_acct_mgmt ve PAM_USER tutarlilik kontrolu
+# basarili olduktan SONRA, kimlik bilgisi/oturum kurulumundan ONCE yazar. Aktor, basarisiz
+# denemedeki PAM 'ruser' ile ayni degerdir (gercek UID'in adi).
+#   ^...$            -> tam satir; 'FAILED SU (to ...)' basta eslesmez.
+#   (?P<target>\S+)  -> hedef bos olamaz.  (?P<actor>\S*) -> aktor bos olabilir.
+#   (?P<tty>\S+)     -> 'pts/0', 'tty1', 'none'; eslestirilir ama saklanmaz.
+_SU_SUCCESS_RE = re.compile(r"^\(to (?P<target>\S+)\) (?P<actor>\S*) on (?P<tty>\S+)$")
+
+
 def _pam_fields(text: str) -> dict[str, str]:
     """PAM mesajindaki anahtar=deger alanlarini dict'e cevirir (ayni anahtar tekrarlanirsa ilki)."""
     fields: dict[str, str] = {}
@@ -258,6 +270,16 @@ def parse_line(
             timestamp, host, process, etype,
             username=username, source_ip=rhost, port=None, raw_line=line,
             actor_username=actor_username,
+        )
+
+    # util-linux su basari kaydi. Yalnizca 'su' surecinden kabul edilir; ayni govde baska
+    # bir surecten (runuser, sshd ...) gelirse UNKNOWN kalir. PAM 'session opened/closed'
+    # ve 'FAILED SU' satirlari bilincli olarak burada siniflandirilmaz.
+    if process == "su" and (m := _SU_SUCCESS_RE.match(message)):
+        return Event(
+            timestamp, host, process, EventType.SU_SUCCESS,
+            username=m["target"], source_ip=None, port=None, raw_line=line,
+            actor_username=m["actor"] or None,
         )
 
     # Baslik taninip mesaj siniflandirilamadi: bilgiyi kaybetme, UNKNOWN dondur.

@@ -55,6 +55,8 @@ def build_store(
     sudo_threshold: int = 3,
     su_window: int = 300,
     su_threshold: int = 3,
+    su_success_min_fails: int = 3,
+    su_success_window: int = 600,
 ) -> EventStore:
     """
     Log dosyasini parse edip tum kurallari calistirir ve dolu bir EventStore dondurur.
@@ -82,6 +84,8 @@ def build_store(
         sudo_threshold=sudo_threshold,
         su_window=su_window,
         su_threshold=su_threshold,
+        su_success_min_fails=su_success_min_fails,
+        su_success_window=su_success_window,
     )
     for a in alerts:
         store.add_alert(a)
@@ -156,6 +160,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="su_brute_force: ayni host+aktor penceresi (saniye). Varsayilan 300.")
     p.add_argument("--su-threshold", type=int, default=3,
                    help="su_brute_force: min. basarisiz su sayisi. Varsayilan 3.")
+    p.add_argument("--su-success-min-fails", type=int, default=3,
+                   help="su_fail_then_success: basaridan onceki min. basarisiz su. Varsayilan 3.")
+    p.add_argument("--su-success-window", type=int, default=600,
+                   help="su_fail_then_success: geriye bakma suresi (saniye). Varsayilan 600.")
     p.add_argument("--allow", action="append", default=None, metavar="IP",
                    help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
                         "Yerel sudo/su alarmlarini bastirmaz.")
@@ -184,6 +192,8 @@ def main() -> None:
             sudo_threshold=args.sudo_threshold,
             su_window=args.su_window,
             su_threshold=args.su_threshold,
+            su_success_min_fails=args.su_success_min_fails,
+            su_success_window=args.su_success_window,
         )
     except FileNotFoundError:
         print(f"HATA: dosya bulunamadi: {args.logfile}", file=sys.stderr)

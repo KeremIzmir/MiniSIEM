@@ -406,3 +406,66 @@ def test_su_alert_output_is_neutralised(tmp_path):
     assert "su_brute_force" in out
     assert "\x1b" not in out and "\x07" not in out
     assert r"al\x1b[2Jice@web-01" in out
+
+
+# --------------------------------------------------------------------------- #
+# su_fail_then_success — gecici gercekci su loglariyla
+# --------------------------------------------------------------------------- #
+def _su_ok_line(sec: int, actor: str, target: str) -> str:
+    return f"Jun  1 05:55:{sec:02d} web-01 su[4242]: (to {target}) {actor} on pts/0\n"
+
+
+def _write_su_seq(tmp_path, fail_pairs, ok_pair, ok_sec=40, name="seq.log"):
+    p = tmp_path / name
+    lines = [_su_line(i * 5, a, t) for i, (a, t) in enumerate(fail_pairs)] + [_su_ok_line(ok_sec, *ok_pair)]
+    p.write_text("".join(lines), encoding="utf-8")
+    return p
+
+
+def test_su_success_flag_defaults_and_overrides():
+    args = cli.build_parser().parse_args(["auth.log"])
+    assert (args.su_success_min_fails, args.su_success_window) == (3, 600)
+    args = cli.build_parser().parse_args(["auth.log", "--su-success-min-fails", "5", "--su-success-window", "60"])
+    assert (args.su_success_min_fails, args.su_success_window) == (5, 60)
+
+
+@pytest.mark.parametrize("flag,value", [("--su-success-min-fails", "0"), ("--su-success-window", "-1")])
+def test_invalid_su_success_config_returns_2(flag, value):
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    code, _ = _run([str(SAMPLE_LOG), flag, value])
+    assert code == 2
+
+
+def test_su_fail_then_success_end_to_end(tmp_path):
+    log = _write_su_seq(tmp_path, [("alice", "root")] * 3, ("alice", "root"))
+    code, data = _json_for(tmp_path, log)
+    assert code == 1
+    assert [e["event_type"] for e in data["events"]] == ["SU_FAILURE"] * 3 + ["SU_SUCCESS"]
+    assert (data["events"][-1]["username"], data["events"][-1]["actor_username"]) == ("root", "alice")
+    fts = [a for a in data["alerts"] if a["rule_name"] == "su_fail_then_success"]
+    assert len(fts) == 1
+    assert (fts[0]["severity"], fts[0]["count"], fts[0]["source_ip"]) == ("high", 3, None)
+    assert len(fts[0]["evidence"]) == 4                                  # 3 basarisizlik + basari
+    assert fts[0]["description"].startswith("alice@web-01: root hesabina")
+
+
+def test_su_success_flag_reaches_rule(tmp_path):
+    log = _write_su_seq(tmp_path, [("alice", "root")] * 3, ("alice", "root"))
+    _, data = _json_for(tmp_path, log, "--su-success-min-fails", "4")
+    assert "su_fail_then_success" not in {a["rule_name"] for a in data["alerts"]}
+
+
+def test_su_success_to_other_target_does_not_correlate(tmp_path):
+    log = _write_su_seq(tmp_path, [("alice", "root")] * 3, ("alice", "postgres"))
+    _, data = _json_for(tmp_path, log)
+    assert "su_fail_then_success" not in {a["rule_name"] for a in data["alerts"]}
+
+
+def test_su_fail_then_success_output_is_neutralised(tmp_path):
+    actor, target = "al\x1b[2Jice", "ro\x1b]0;X\x07ot"
+    log = _write_su_seq(tmp_path, [(actor, target)] * 3, (actor, target))
+    code, out = _run([str(log), "--quiet", "--no-color"])
+    assert code == 1
+    assert "su_fail_then_success" in out
+    assert "\x1b" not in out and "\x07" not in out
