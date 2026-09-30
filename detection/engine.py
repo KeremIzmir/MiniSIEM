@@ -20,6 +20,7 @@ from detection.enumeration import detect_enumeration
 from detection.fail_then_success import detect_fail_then_success
 from detection.anomaly import detect_anomalous_ips
 from detection.sudo_brute_force import detect_sudo_brute_force
+from detection.su_brute_force import detect_su_brute_force
 
 
 def run_detections(
@@ -34,6 +35,8 @@ def run_detections(
     anomaly_min_volume: int = 5,
     sudo_window: int = 300,
     sudo_threshold: int = 3,
+    su_window: int = 300,
+    su_threshold: int = 3,
 ) -> List[Alert]:
     """
     Tum tespit kurallarini calistirir ve alarmlari severity + count'a gore siralar.
@@ -46,13 +49,16 @@ def run_detections(
         allowlist         : guvenilir IP'ler. Bu IP'lerden gelen olaylar tespitten
                             ONCE elenir (guvenilir kaynaklar yanlis alarm uretmesin).
                             Yalnizca kaynak IP'si olan (ag kaynakli) olaylari etkiler;
-                            yerel sudo olaylarinda IP yoktur, bu yuzden elenmezler.
+                            tipik yerel sudo/su olaylarinda IP yoktur, bu yuzden elenmezler
+                            (IP'si gercekten dolu bir olay ise bu filtreye tabidir).
         min_fails         : fail_then_success icin min. basarisizlik sayisi.
         success_window    : fail_then_success icin basaridan geriye bakma suresi (sn).
         anomaly_k         : anomali esigi (kac standart sapma ustu).
         anomaly_min_volume: anomali icin min. mutlak olay sayisi.
         sudo_window       : sudo_brute_force kayan pencere genisligi (saniye).
         sudo_threshold    : sudo_brute_force esigi (ayni host+kullanici basarisiz sudo sayisi).
+        su_window         : su_brute_force kayan pencere genisligi (saniye).
+        su_threshold      : su_brute_force esigi (ayni host+aktor basarisiz su sayisi).
 
     NEDEN HEPSI BURADA: Eskiden yalnizca brute-force ve enumeration ayarlanabiliyordu;
     fail_then_success ve anomaly kendi varsayilanlarina kilitliydi — yani o kurallarin
@@ -80,6 +86,8 @@ def run_detections(
         filtered_events, k=anomaly_k, min_volume=anomaly_min_volume))
     alerts.extend(detect_sudo_brute_force(
         filtered_events, window=sudo_window, threshold=sudo_threshold))
+    alerts.extend(detect_su_brute_force(
+        filtered_events, window=su_window, threshold=su_threshold))
 
     # Severity.rank ile siralama: alfabetik string sirasi yanlis olurdu
     # ("high" < "low"), bu yuzden sayisal rank kullaniriz. Negatif -> azalan.

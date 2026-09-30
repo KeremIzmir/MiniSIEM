@@ -20,10 +20,11 @@ Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Infor
   | `fail_then_success` | Ardışık başarısızlıkların ardından **başarılı** giriş (olası başarılı brute-force) | daima `high` |
   | `anomalous_ip` | Hacim olarak istatistiksel aykırı (z-score) IP'ler | başarısızlık oranı ≥ %80 ise `high`, değilse `medium` |
   | `sudo_brute_force` | Aynı host'ta aynı kullanıcının kısa pencerede tekrarlanan **başarısız sudo** kimlik doğrulamaları (olası yerel yetki yükseltme) | eşiğin 2 katından az `medium`, fazlası `high` |
+  | `su_brute_force` | Aynı host'ta aynı **yerel aktörün** kısa pencerede tekrarlanan **başarısız `su`** denemeleri; aktörün farklı hedef hesaplara denemeleri tek grupta birleşir (olası yerel hesap geçişi veya parola tahmini) | eşiğin 2 katından az `medium`, fazlası `high` |
 
   Önem derecesi sabit değildir; her kural bulgunun büyüklüğüne göre hesaplar.
 
-- **Allowlist** — güvenilir IP'ler tespitten **önce** elenir (yanlış alarm üretmesin). Yalnızca kaynak IP'si olan (ağ kaynaklı) olayları etkiler; yerel sudo olaylarında IP bulunmadığından `sudo_brute_force` alarmlarını **bastırmaz**.
+- **Allowlist** — güvenilir IP'ler tespitten **önce** elenir (yanlış alarm üretmesin). Yalnızca kaynak IP'si olan olayları etkiler: tipik yerel sudo/su olaylarında IP bulunmadığından `sudo_brute_force` ve `su_brute_force` alarmlarını **bastırmaz**. Bir olayda kaynak IP gerçekten doluysa (PAM `rhost`) o olay da bu IP filtresine tabidir.
 - **İki arayüz, tek mantık** — CLI ve pano aynı `parse → store → run_detections` akışını kullanır; kurallar tek yerde (`detection/engine.py`) ve **her iki arayüz de aynı ayar yüzeyini** sunar.
 - **JSON çıktı** — `--json` ile özet + olaylar + alarmlar dışa aktarılır.
 - **Log enjeksiyonuna karşı korumalı çıktı** — log satırları saldırgan kontrolündedir; terminale basılmadan önce ANSI/kontrol karakterleri etkisiz hale getirilir (bkz. *Güvenlik notları*).
@@ -72,8 +73,10 @@ Tespit eşikleri (hepsi isteğe bağlı):
 | `--anomaly-min-volume N` | 5 | `anomalous_ip` min. mutlak olay sayısı |
 | `--sudo-window SANIYE` | 300 | `sudo_brute_force` kayan pencere genişliği |
 | `--sudo-threshold N` | 3 | `sudo_brute_force` eşiği (aynı host + kullanıcı) |
+| `--su-window SANIYE` | 300 | `su_brute_force` kayan pencere genişliği |
+| `--su-threshold N` | 3 | `su_brute_force` eşiği (aynı host + aktör) |
 
-`sample_auth.log` yalnızca 2 başarısız sudo denemesi içerdiği için `sudo_brute_force` varsayılan ayarlarla tetiklenmez; kuralı görmek için `--sudo-threshold 2` kullanılabilir.
+`sample_auth.log` yalnızca 2 başarısız sudo denemesi içerdiği için `sudo_brute_force` varsayılan ayarlarla tetiklenmez; kuralı görmek için `--sudo-threshold 2` kullanılabilir. Örnek logda `su` satırı yoktur; `su_brute_force` varsayılan örnek sonucunu değiştirmez.
 
 **Çıkış kodu:** alarm varsa `1`, temizse `0`, kullanım/dosya/ayar hatasında `2` (script'lerde "bulgu var mı" sinyali olarak kullanılabilir).
 
@@ -84,7 +87,7 @@ python -m dashboard.app sample_auth.log                # http://127.0.0.1:5000
 python -m dashboard.app sample_auth.log --host 0.0.0.0 --port 8080
 ```
 
-Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--allow`).
+Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--su-window`, `--su-threshold`, `--allow`).
 
 Pano rotaları: `/` (HTML), `/api/summary`, `/api/alerts`, `/api/timeline` (JSON).
 
@@ -106,13 +109,14 @@ MiniSiem/
 │   ├── fail_then_success.py
 │   ├── anomaly.py         # leave-one-out z-score hacim anomalisi
 │   ├── sudo_brute_force.py # host + kullanıcı bazlı başarısız sudo tespiti
+│   ├── su_brute_force.py  # host + aktör bazlı başarısız su tespiti
 │   └── engine.py          # tüm kuralları çalıştırıp sıralar
 ├── storage/
 │   └── store.py           # EventStore (bellek + JSON, SQLite'a geçişe hazır)
 ├── dashboard/
 │   ├── app.py             # Flask uygulaması (application factory)
 │   └── templates/index.html
-├── tests/                 # 163 test (conftest.py + 10 test modülü)
+├── tests/                 # 227 test (conftest.py + 11 test modülü)
 ├── .github/workflows/ci.yml
 ├── cli.py                 # komut satırı arayüzü
 ├── sample_auth.log        # örnek log (RFC5737 test IP'leri)
@@ -154,8 +158,8 @@ Her paketin bir `__init__.py` dosyası vardır. Bağımlılık akışı (en az b
 [ LOW  ] brute_force ×3
 ```
 
-Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunur (`sudo_brute_force` yerel olduğu için IP yerine açıklamada `kullanıcı@host` verir). Ek olarak:
-- **Zaman penceresi** `brute_force`, `fail_then_success` ve `sudo_brute_force` alarmlarında bulunur (diğer iki kural zaman değil çeşitlilik/hacim tabanlıdır).
+Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunur (`sudo_brute_force` ve `su_brute_force` yerel olduğu için IP yerine açıklamada `kullanıcı@host` / `aktör@host` verir). Ek olarak:
+- **Zaman penceresi** `brute_force`, `fail_then_success`, `sudo_brute_force` ve `su_brute_force` alarmlarında bulunur (diğer iki kural zaman değil çeşitlilik/hacim tabanlıdır).
 - **Ham log satırlarından kanıt** `anomalous_ip` dışındaki tüm kurallarda bulunur (o kural istatistik özeti üretir, tek bir satıra dayanmaz).
 
 ---
@@ -166,8 +170,14 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
 - **Yıl çıkarımı:** `auth.log` yıl bilgisi içermez; parser referans yılı ekler ve yılbaşı geçişinde tarihin geleceğe kaymasını engeller. `Feb 29` gibi yalnızca artık yıllarda geçerli tarihler en yakın uygun yıla düşürülür; hiçbir yılda geçerli olmayan tarih (`Feb 31`) satırı *unparsed* sayılır — tek bozuk satır tüm dosyayı iptal etmez.
 - **Anomali kuralı — maskeleme:** Eşik, adayın **kendisi hariç** diğer IP'lerden hesaplanır (*leave-one-out*). Aksi halde aykırı değer kendi eşiğini şişirir; anakütle sapmasıyla `n` örneklemde ulaşılabilecek en büyük z-score `sqrt(n-1)` olduğu için `k=2.0` ile 6'dan az IP'de alarm **matematiksel olarak imkânsız** olurdu.
 - **`fail_then_success` penceresi:** Pencere, başarının son başarısızlığa uzaklığına değil **başarısızlıkların kendisine** uygulanır; böylece haftalar önceki denemeler sayıma girmez.
-- **`sudo_brute_force`:** Yalnızca `SUDO_FAILURE` olaylarını (`pam_unix(sudo:auth): authentication failure` satırları) sayar ve `(host, kullanıcı)` bazında gruplar; farklı makineler ya da kullanıcılar birleşmez. Kayan pencere kapsayıcıdır (fark tam pencere kadarsa aynı penceredir), girdi sırasına bağlı değildir ve grup başına en yoğun pencereden tek alarm üretir. Kapsam: sudo'nun `N incorrect password attempts` özet satırı **desteklenmez** (bu kural tarafından sayılmaz). Mevcut genel PAM `authentication failure` ayrıştırması korunur (sudo → `SUDO_FAILURE`, sshd/su gibi diğer süreçler → `AUTH_FAILURE`); başka sudo log biçimleri bu özelliğin kapsamı dışındadır.
-- **PAM alanları ve sudo aktörü:** PAM satırındaki `anahtar=değer` alanları tek tek ayrılır; `user=` araması asla `ruser=` içinden eşleşmez. sudo olaylarında kullanıcı, parolayı yazan **aktördür** (`ruser` → `logname` → `user` önceliği); diğer PAM olaylarında (sshd, su) hedef hesap olan `user=` kullanılır.
+- **`sudo_brute_force`:** Yalnızca `SUDO_FAILURE` olaylarını (`pam_unix(sudo:auth): authentication failure` satırları) sayar ve `(host, kullanıcı)` bazında gruplar; farklı makineler ya da kullanıcılar birleşmez. Kayan pencere kapsayıcıdır (fark tam pencere kadarsa aynı penceredir), girdi sırasına bağlı değildir ve grup başına en yoğun pencereden tek alarm üretir. Kapsam: sudo'nun `N incorrect password attempts` özet satırı **desteklenmez** (bu kural tarafından sayılmaz). PAM `authentication failure` satırları süreç adına göre sınıflandırılır (sudo → `SUDO_FAILURE`, su → `SU_FAILURE`, sshd/login gibi diğerleri → `AUTH_FAILURE`); başka sudo log biçimleri bu özelliğin kapsamı dışındadır.
+- **PAM alanları: aktör ve hedef:** PAM satırındaki `anahtar=değer` alanları tek tek ayrılır; `user=` araması asla `ruser=` içinden eşleşmez. `user=` **hedef** hesaptır; `ruser` / `logname` işlemi başlatan **aktördür**. `Event.actor_username` aktörü ayrı taşır (`ruser` → `logname` → yoksa boş); `user=` asla aktörün yerine kullanılmaz.
+  - **su:** `username` = hedef hesap (`user=`), `actor_username` = `su`'yu çalıştıran aktör.
+  - **sudo:** geriye uyumluluk için `username` değişmedi (parolayı yazan aktör: `ruser` → `logname` → `user`); aktör ayrıca `actor_username`'de de tutulur (aktör yoksa boş).
+  - **sshd/login gibi diğer PAM olayları:** `username` = hedef hesap, `actor_username` boş.
+  - `actor_username` JSON çıktısına eklenmiş yeni bir alandır (mevcut alanlar değişmedi).
+- **`su_brute_force`:** Yalnızca `SU_FAILURE` olaylarını sayar ve `(host, aktör)` bazında gruplar: aynı aktörün farklı hedeflere denemeleri tek grupta birleşir, farklı aktörlerin aynı hedefe (örn. root) tekil hataları birleşmez. Aktörü bilinmeyen olay sayılmaz. Açıklama en yoğun penceredeki hedefleri sıralı ve en fazla 5 tane listeler. Kapsam: yalnızca `su` sürecinin `pam_unix(su:auth)` başarısızlıkları; `su-l`, `runuser`, eski `FAILED SU` satırları ve başarılı `su` oturumları desteklenmez.
+- **PAM tekrar özetleri:** `pam_unix`, aynı PAM işlemindeki ek başarısızlıkları `N more authentication failures` özet satırıyla yazabilir. Bu satırlar sayılan olay değildir (çift sayım olmasın diye). Bu yüzden `sudo_brute_force` ve `su_brute_force` tek tek parola istemlerini değil, parser'ın tanıdığı birincil başarısızlık olaylarını sayar.
 - **Genişletme:** Yeni bir kural eklemek = `detection/` altına bir fonksiyon + `engine.py`'ye bir satır. Kuralın ayarları dışarıya açılacaksa, iki arayüz aynı ayar yüzeyini koruyabilsin diye aynı bayraklar hem `cli.py`'ye hem `dashboard/app.py`'ye eklenir.
 
 ---
@@ -184,11 +194,11 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
 
 ```bash
 pip install -r requirements-dev.txt   # pytest + pytest-cov
-pytest                                # 163 test
+pytest                                # 227 test
 pytest --cov --cov-report=term-missing
 ```
 
-`tests/` altında parser, beş tespit kuralı, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır (kapsam ~%98). Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
+`tests/` altında parser, altı tespit kuralı, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır (kapsam ~%98). Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
 
 `.github/workflows/ci.yml`, `main` hedefli pull request'lerde ve `main` branch'ine yapılan push/merge'lerde testleri Python 3.11–3.13 üzerinde, Linux'ta çalıştırır; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
 

@@ -21,6 +21,7 @@ class EventType(StrEnum):
     ACCEPTED_LOGIN = "ACCEPTED_LOGIN"     # "Accepted password/publickey ..." — basarili giris
     INVALID_USER = "INVALID_USER"         # "Invalid user X from IP" — var olmayan kullanici
     SUDO_FAILURE = "SUDO_FAILURE"         # sudo authentication failure
+    SU_FAILURE = "SU_FAILURE"             # su authentication failure (hedef hesaba gecis)
     AUTH_FAILURE = "AUTH_FAILURE"         # genel PAM authentication failure
     UNKNOWN = "UNKNOWN"                    # taninamayan ama olay olabilecek satir
 
@@ -43,6 +44,10 @@ class Event:
     source_ip: Optional[str]          # baglantinin geldigi IP (yoksa None)
     port: Optional[int]               # kaynak port (yoksa None)
     raw_line: str                     # orijinal ham log satiri (kanit/evidence icin saklanir)
+    # Islemi baslatan yerel AKTOR (PAM ruser > logname). Hedef hesaptan (username)
+    # ayri tutulur: su'da username gecilmek istenen hesap, actor_username su'yu
+    # calistiran kisidir. Sona ve varsayilanli eklendi -> mevcut Event(...) cagrilari bozulmaz.
+    actor_username: Optional[str] = None
 
     def to_dict(self) -> dict:
         """
@@ -61,6 +66,7 @@ class Event:
             "source_ip": self.source_ip,
             "port": self.port,
             "raw_line": self.raw_line,
+            "actor_username": self.actor_username,
         }
 
     @property
@@ -70,6 +76,7 @@ class Event:
             EventType.FAILED_PASSWORD,
             EventType.INVALID_USER,
             EventType.SUDO_FAILURE,
+            EventType.SU_FAILURE,
             EventType.AUTH_FAILURE,
         )
 

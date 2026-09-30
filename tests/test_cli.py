@@ -322,3 +322,87 @@ def test_top_ips_empty_prints_nothing():
     buf = io.StringIO()
     cli._print_top_ips(EventStore(), out=buf)
     assert buf.getvalue() == ""
+
+
+# --------------------------------------------------------------------------- #
+# su_brute_force — gecici gercekci su loglariyla
+# --------------------------------------------------------------------------- #
+def _su_line(sec: int, actor: str, target: str) -> str:
+    return (f"Jun  1 05:55:{sec:02d} web-01 su: pam_unix(su:auth): authentication failure; "
+            f"logname={actor} uid=1000 euid=0 tty=pts/0 ruser={actor} rhost=  user={target}\n")
+
+
+def _write_su_log(tmp_path, pairs):
+    p = tmp_path / "su.log"
+    p.write_text("".join(_su_line(i * 5, a, t) for i, (a, t) in enumerate(pairs)), encoding="utf-8")
+    return p
+
+
+def _json_for(tmp_path, log, *extra):
+    out_json = tmp_path / "su.json"
+    code, _ = _run([str(log), "--quiet", "--json", str(out_json), *extra])
+    return code, json.loads(out_json.read_text(encoding="utf-8"))
+
+
+def test_su_flag_defaults_and_overrides():
+    args = cli.build_parser().parse_args(["auth.log"])
+    assert (args.su_window, args.su_threshold) == (300, 3)
+    args = cli.build_parser().parse_args(["auth.log", "--su-window", "60", "--su-threshold", "5"])
+    assert (args.su_window, args.su_threshold) == (60, 5)
+
+
+@pytest.mark.parametrize("flag,value", [("--su-threshold", "0"), ("--su-window", "-1")])
+def test_invalid_su_config_returns_2(flag, value):
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    code, _ = _run([str(SAMPLE_LOG), flag, value])
+    assert code == 2
+
+
+def test_sample_has_no_su_alert_by_default(tmp_path):
+    if not SAMPLE_LOG.exists():
+        pytest.skip("sample_auth.log yok")
+    code, data = _json_report(tmp_path)
+    assert (data["summary"]["toplam_olay"], data["summary"]["basarisiz_giris"],
+            data["summary"]["alarm_sayisi"]) == (36, 31, 6)
+    assert "su_brute_force" not in {a["rule_name"] for a in data["alerts"]}
+    assert code == 1
+
+
+def test_su_actor_switching_targets_triggers_rule(tmp_path):
+    log = _write_su_log(tmp_path, [("alice", "root"), ("alice", "postgres"), ("alice", "deploy")])
+    code, data = _json_for(tmp_path, log)
+    assert code == 1
+    evs = data["events"]
+    assert [e["event_type"] for e in evs] == ["SU_FAILURE"] * 3
+    assert {e["actor_username"] for e in evs} == {"alice"}
+    assert [e["username"] for e in evs] == ["root", "postgres", "deploy"]
+    su = [a for a in data["alerts"] if a["rule_name"] == "su_brute_force"]
+    assert len(su) == 1
+    assert su[0]["severity"] == "medium"
+    assert su[0]["source_ip"] is None
+    assert su[0]["description"].startswith("alice@web-01:")
+    assert "hedefler: deploy, postgres, root;" in su[0]["description"]
+
+
+def test_su_different_actors_same_target_do_not_combine(tmp_path):
+    log = _write_su_log(tmp_path, [("alice", "root"), ("bob", "root"), ("charlie", "root")])
+    code, data = _json_for(tmp_path, log)
+    assert "su_brute_force" not in {a["rule_name"] for a in data["alerts"]}
+    assert code == 0
+
+
+def test_su_threshold_flag_reaches_rule(tmp_path):
+    log = _write_su_log(tmp_path, [("alice", "root")] * 3)
+    _, data = _json_for(tmp_path, log, "--su-threshold", "4")
+    assert "su_brute_force" not in {a["rule_name"] for a in data["alerts"]}
+
+
+def test_su_alert_output_is_neutralised(tmp_path):
+    """Aktor ve hedef log'dan gelir; terminalde kontrol karakterleri etkisiz olmali."""
+    log = _write_su_log(tmp_path, [("al\x1b[2Jice", "ro\x1b]0;X\x07ot")] * 3)
+    code, out = _run([str(log), "--quiet", "--no-color"])
+    assert code == 1
+    assert "su_brute_force" in out
+    assert "\x1b" not in out and "\x07" not in out
+    assert r"al\x1b[2Jice@web-01" in out

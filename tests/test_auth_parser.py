@@ -85,7 +85,8 @@ def test_sshd_pam_failure_takes_rhost_ip():
 
 # --- PAM alanlari: 'user=' asla 'ruser=' icinden eslesmemeli ---------------- #
 # sudo icin kullanici = komutu calistiran aktor: ruser > logname > user.
-# Diger PAM olaylari (sshd, su ...) hedef hesabi, yani 'user=' alanini kullanir.
+# su icin kullanici = HEDEF hesap ('user='); aktor ayrica actor_username'de tutulur.
+# Diger PAM olaylari (sshd, login ...) hedef hesabi, yani 'user=' alanini kullanir.
 
 _SUDO_PAM = ("Jun  1 05:52:40 web-01 sudo: pam_unix(sudo:auth): authentication failure; "
              "logname={logname} uid=1000 euid=0 tty=/dev/pts/0 ruser={ruser} rhost=  user={user}")
@@ -113,12 +114,14 @@ def test_sudo_pam_falls_back_to_target_user():
 
 def test_non_sudo_pam_uses_target_user_even_when_ruser_set():
     # Eski regex 'user=' anahtarini 'ruser=alice' icinde bulup alice donduruyordu.
-    line = ("Jun  1 05:52:40 web-01 su: pam_unix(su:auth): authentication failure; "
-            "logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user=root")
+    # (su artik SU_FAILURE oldugu icin genel PAM yolu 'login' ile sabitlenir.)
+    line = ("Jun  1 05:52:40 web-01 login[900]: pam_unix(login:auth): authentication failure; "
+            "logname=alice uid=0 euid=0 tty=tty1 ruser=alice rhost=  user=root")
     e = parse_line(line, now=NOW)
     assert e.event_type == EventType.AUTH_FAILURE
     assert e.username == "root"
     assert e.source_ip is None
+    assert e.actor_username is None     # genel PAM olaylarinda aktor cikarilmaz
 
 
 def test_pam_rhost_captured_when_ruser_set():
@@ -260,3 +263,109 @@ def test_parse_file_replaces_bad_bytes(tmp_path):
     assert len(events) == 1
     assert unparsed == []
     assert "�" in events[0].username     # U+FFFD REPLACEMENT CHARACTER
+
+
+# --- su: hedef hesap username'de, isteyen aktor actor_username'de ------------ #
+# PAM 'user=' = gecilmek istenen HEDEF hesap; 'ruser' / 'logname' = su'yu calistiran
+# AKTOR. 'user=' asla aktorun yedegi degildir.
+
+_SU_PAM = ("Jun  1 05:55:00 web-01 {proc}: pam_unix(su:auth): authentication failure; "
+           "logname={logname} uid=1000 euid=0 tty=pts/0 ruser={ruser} rhost=  user={user}")
+
+
+def test_su_pam_failure_classified_with_actor_and_target():
+    e = parse_line(_SU_PAM.format(proc="su", logname="alice", ruser="alice", user="root"), now=NOW)
+    assert e.event_type == EventType.SU_FAILURE
+    assert e.process == "su"
+    assert e.username == "root"             # hedef
+    assert e.actor_username == "alice"      # aktor
+    assert e.source_ip is None
+    assert e.port is None
+    assert e.is_failure and not e.is_success
+
+
+def test_su_actor_prefers_ruser_over_logname():
+    e = parse_line(_SU_PAM.format(proc="su", logname="session-user", ruser="alice", user="root"), now=NOW)
+    assert e.actor_username == "alice"
+    assert e.username == "root"
+
+
+def test_su_actor_falls_back_to_logname():
+    e = parse_line(_SU_PAM.format(proc="su", logname="bob", ruser="", user="root"), now=NOW)
+    assert e.event_type == EventType.SU_FAILURE
+    assert e.actor_username == "bob"
+    assert e.username == "root"
+
+
+def test_su_missing_actor_is_none_never_target():
+    # ruser ve logname bos: aktor bilinmiyor. 'user=root' ASLA aktor yapilmaz.
+    e = parse_line(_SU_PAM.format(proc="su", logname="", ruser="", user="root"), now=NOW)
+    assert e.event_type == EventType.SU_FAILURE
+    assert e.username == "root"
+    assert e.actor_username is None
+
+
+def test_su_without_target_user_stays_unknown():
+    line = ("Jun  1 05:55:00 web-01 su: pam_unix(su:auth): authentication failure; "
+            "logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=")
+    e = parse_line(line, now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+    assert e.actor_username is None
+
+
+def test_su_with_pid_header():
+    e = parse_line(_SU_PAM.format(proc="su[1234]", logname="alice", ruser="alice", user="root"), now=NOW)
+    assert e.event_type == EventType.SU_FAILURE
+    assert e.process == "su"
+    assert e.actor_username == "alice"
+
+
+def test_sudo_keeps_username_semantics_and_exposes_actor():
+    # username davranisi PR #4'teki gibi kalir; aktor ayrica actor_username'de.
+    e = parse_line(_SUDO_PAM.format(logname="alice", ruser="alice", user="root"), now=NOW)
+    assert (e.event_type, e.username, e.actor_username) == (EventType.SUDO_FAILURE, "alice", "alice")
+    e = parse_line(_SUDO_PAM.format(logname="bob", ruser="", user="root"), now=NOW)
+    assert (e.username, e.actor_username) == ("bob", "bob")
+
+
+def test_sudo_without_actor_keeps_target_fallback_but_actor_is_none():
+    e = parse_line(_SUDO_PAM.format(logname="", ruser="", user="bob"), now=NOW)
+    assert e.event_type == EventType.SUDO_FAILURE
+    assert e.username == "bob"              # mevcut geriye uyumlu yedek
+    assert e.actor_username is None          # ama hedef aktor yapilmaz
+
+
+def test_sshd_pam_has_no_actor():
+    line = ("Jun  1 05:53:05 web-01 sshd[12210]: pam_unix(sshd:auth): authentication failure; "
+            "logname= uid=0 euid=0 tty=ssh ruser= rhost=192.0.2.40  user=root")
+    e = parse_line(line, now=NOW)
+    assert (e.event_type, e.username, e.source_ip, e.actor_username) == (
+        EventType.AUTH_FAILURE, "root", "192.0.2.40", None)
+
+
+@pytest.mark.parametrize("proc,svc,user", [("su", "su", "root"), ("sudo", "sudo", "bob")])
+def test_pam_retry_summary_lines_are_not_counted_failures(proc, svc, user):
+    # pam_unix ayni PAM islemindeki ek hatalari "N more authentication failures"
+    # ozetiyle yazar. Bunlar sayilan olay OLMAMALI (cift sayim olurdu).
+    line = (f"Jun  1 05:55:10 web-01 {proc}: pam_unix({svc}:auth): 2 more authentication failures; "
+            f"logname=alice uid=1000 euid=0 tty=pts/0 ruser=alice rhost=  user={user}")
+    e = parse_line(line, now=NOW)
+    assert e.event_type not in (EventType.SU_FAILURE, EventType.SUDO_FAILURE)
+    assert e.event_type == EventType.UNKNOWN
+    assert not e.is_failure
+
+
+# --- Event modeli: geriye uyumluluk ------------------------------------------ #
+
+def test_event_without_actor_argument_defaults_to_none():
+    from parser.events import Event
+    e = Event(NOW, "web-01", "sshd", EventType.FAILED_PASSWORD, "root", "192.0.2.1", 22, "raw")
+    assert e.actor_username is None
+
+
+def test_event_to_dict_includes_actor_username():
+    e = parse_line(_SU_PAM.format(proc="su", logname="alice", ruser="alice", user="root"), now=NOW)
+    d = e.to_dict()
+    assert d["actor_username"] == "alice"
+    assert d["event_type"] == "SU_FAILURE"
+    assert d["username"] == "root"
