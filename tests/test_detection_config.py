@@ -135,6 +135,17 @@ def test_every_field_is_exercised_by_overrides():
     assert {name for o in OVERRIDES for name in o} == set(FIELDS)
 
 
+# Engine kural sirasi: brute_force -> enumeration -> fail_then_success -> ANOMALY -> sudo -> su
+# -> su_success. Birden cok gecersiz ayarda ilk hata bu siradan gelir.
+FIRST_ERROR = [
+    ({"window": -1, "anomaly_k": -1}, "window negatif olamaz: -1"),
+    ({"enum_threshold": 0, "anomaly_k": -1}, "threshold en az 1 olmali: 0"),
+    ({"min_fails": 0, "anomaly_k": -1}, "min_fails en az 1 olmali: 0"),
+    ({"anomaly_k": -1, "sudo_threshold": 0}, "anomaly k negatif olmayan sonlu bir sayi olmali: -1"),
+    ({"anomaly_min_volume": 0, "su_threshold": 0}, "anomaly min_volume en az 1 olmali: 0"),
+    ({"anomaly_k": -1, "anomaly_min_volume": 0}, "anomaly k negatif olmayan sonlu bir sayi olmali: -1"),
+]
+
 INVALID = [
     {"window": -1}, {"threshold": 0}, {"enum_threshold": 0}, {"min_fails": 0},
     {"success_window": -1}, {"sudo_window": -1}, {"sudo_threshold": 0}, {"su_window": -1},
@@ -142,7 +153,9 @@ INVALID = [
     {"window": -1, "sudo_window": -1},                  # ilk hata: brute_force
     {"su_threshold": 0, "enum_threshold": 0},           # ilk hata: enumeration
     {"su_success_window": -1, "sudo_threshold": 0},     # ilk hata: sudo_brute_force
-]
+    {"anomaly_k": -1}, {"anomaly_k": float("nan")}, {"anomaly_k": float("inf")},
+    {"anomaly_k": float("-inf")}, {"anomaly_min_volume": 0}, {"anomaly_min_volume": -1},
+] + [overrides for overrides, _ in FIRST_ERROR]
 
 
 def _error(fn):
@@ -160,9 +173,22 @@ def test_invalid_config_same_error_on_both_paths(overrides, events):
     assert legacy == native
 
 
-def test_anomaly_settings_remain_unvalidated():
-    events = _corpus()
-    run_detections_with_config(events, DetectionConfig(anomaly_k=-1.0, anomaly_min_volume=-1))
+@pytest.mark.parametrize("overrides", [
+    {"anomaly_k": -1}, {"anomaly_k": float("nan")}, {"anomaly_k": float("inf")},
+    {"anomaly_k": float("-inf")}, {"anomaly_min_volume": 0}, {"anomaly_min_volume": -1},
+], ids=lambda o: f"{next(iter(o))}={next(iter(o.values()))}")
+def test_invalid_anomaly_config_constructs_but_execution_rejects(overrides):
+    # Config salt veri tasir: kurulum HATA VERMEZ; hata calistirmada anomaly kuralindan gelir.
+    config = DetectionConfig(**overrides)
+    with pytest.raises(ValueError, match="^anomaly "):
+        run_detections_with_config(_corpus(), config)
+
+
+@pytest.mark.parametrize("overrides,message", FIRST_ERROR, ids=lambda o: ",".join(o) if isinstance(o, dict) else "")
+def test_first_error_follows_engine_rule_order(overrides, message):
+    for fn in (lambda: run_detections([], **overrides),
+               lambda: run_detections_with_config([], DetectionConfig(**overrides))):
+        assert _error(fn) == (ValueError, message)
 
 
 # --------------------- eski imza: dondurulmus uyumluluk yuzeyi ------------------- #

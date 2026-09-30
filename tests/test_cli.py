@@ -586,3 +586,51 @@ def test_invalid_config_message_unchanged(capsys):
     code, _ = _run([str(SAMPLE_LOG), "--window", "-1", "--sudo-window", "-1"])
     assert code == 2
     assert "HATA: gecersiz tespit ayari: window negatif olamaz: -1" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# anomalous_ip ayar dogrulamasi: kural hatasi CLI'da exit 2 olur
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("argv", [
+    ["--anomaly-k", "-1"], ["--anomaly-k", "nan"], ["--anomaly-k", "inf"],
+    ["--anomaly-k=-inf"],            # '-inf' bosluklu yazilirsa argparse onu secenek sanar (asagida)
+    ["--anomaly-min-volume", "0"], ["--anomaly-min-volume", "-1"],
+], ids=lambda a: " ".join(a))
+def test_invalid_anomaly_settings_exit_2(argv, capsys):
+    code, out = _run([str(SAMPLE_LOG), *argv])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert err.startswith("HATA: gecersiz tespit ayari: anomaly ")
+    assert "Traceback" not in err and "ALARMLAR" not in out
+
+
+def test_invalid_anomaly_messages_exact(capsys):
+    assert _run([str(SAMPLE_LOG), "--anomaly-k", "nan"])[0] == 2
+    assert capsys.readouterr().err == \
+        "HATA: gecersiz tespit ayari: anomaly k negatif olmayan sonlu bir sayi olmali: nan\n"
+    assert _run([str(SAMPLE_LOG), "--anomaly-min-volume", "0"])[0] == 2
+    assert capsys.readouterr().err == \
+        "HATA: gecersiz tespit ayari: anomaly min_volume en az 1 olmali: 0\n"
+
+
+def test_space_separated_negative_inf_is_an_argparse_error(capsys):
+    # Mevcut argparse davranisi (degismedi): '-inf' sayi degil secenek gibi gorunur.
+    with pytest.raises(SystemExit) as exc:
+        _run([str(SAMPLE_LOG), "--anomaly-k", "-inf"])
+    assert exc.value.code == 2
+    assert "expected one argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["--anomaly-k", "0"], ["--anomaly-min-volume", "1"]],
+                         ids=lambda a: " ".join(a))
+def test_valid_anomaly_boundaries_run(argv, capsys):
+    code, out = _run([str(SAMPLE_LOG), "--no-color", *argv])
+    assert code == 1 and "ALARMLAR" in out
+    assert "gecersiz tespit ayari" not in capsys.readouterr().err
+
+
+def test_missing_file_reported_before_invalid_anomaly_setting(capsys):
+    code, _ = _run(["yok_boyle_bir_dosya.log", "--anomaly-k", "-1"])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "dosya bulunamadi" in err and "anomaly" not in err
