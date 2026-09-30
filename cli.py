@@ -22,7 +22,8 @@ from typing import List, Optional
 
 from parser.auth_parser import parse_file
 from storage.store import EventStore
-from detection.engine import run_detections
+from detection.engine import run_detections_with_config
+from detection.options import add_detection_arguments, detection_config_from_namespace
 from detection.alert import Alert
 
 __version__ = "1.0.0"
@@ -138,41 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("logfile", help="Islenecek auth.log dosyasinin yolu.")
     p.add_argument("--json", metavar="PATH", default=None,
                    help="Tum sonucu (ozet+olaylar+alarmlar) bu JSON dosyasina yaz.")
-    p.add_argument("--window", type=int, default=300,
-                   help="Brute-force kayan pencere genisligi (saniye). Varsayilan 300.")
-    p.add_argument("--threshold", type=int, default=5,
-                   help="Brute-force esigi (pencere icindeki basarisiz deneme). Varsayilan 5.")
-    p.add_argument("--enum-threshold", type=int, default=5,
-                   help="Enumeration esigi (bir IP'nin denedigi farkli kullanici sayisi). Varsayilan 5.")
-    p.add_argument("--min-fails", type=int, default=3,
-                   help="fail_then_success: basariyi suheli yapan min. basarisizlik. Varsayilan 3.")
-    p.add_argument("--success-window", type=int, default=600,
-                   help="fail_then_success: basaridan geriye bakma suresi (saniye). Varsayilan 600.")
-    p.add_argument("--anomaly-k", type=float, default=2.0,
-                   help="Anomali esigi: kac standart sapma ustu aykiri sayilsin. Varsayilan 2.0.")
-    p.add_argument("--anomaly-min-volume", type=int, default=5,
-                   help="Anomali icin gereken min. mutlak olay sayisi. Varsayilan 5.")
-    p.add_argument("--sudo-window", type=int, default=300,
-                   help="sudo_brute_force: ayni host+kullanici basarisiz sudo penceresi (saniye). "
-                        "Varsayilan 300.")
-    p.add_argument("--sudo-threshold", type=int, default=3,
-                   help="sudo_brute_force: pencerede alarm icin min. basarisiz sudo sayisi. "
-                        "Varsayilan 3.")
-    p.add_argument("--su-window", type=int, default=300,
-                   help="su_brute_force: ayni host+aktor basarisiz su penceresi (saniye). "
-                        "Varsayilan 300.")
-    p.add_argument("--su-threshold", type=int, default=3,
-                   help="su_brute_force: pencerede alarm icin min. basarisiz su sayisi. "
-                        "Varsayilan 3.")
-    p.add_argument("--su-success-min-fails", type=int, default=3,
-                   help="su_fail_then_success: basarili su gecisinden onceki min. basarisiz su "
-                        "(ayni host+aktor+hedef). Varsayilan 3.")
-    p.add_argument("--su-success-window", type=int, default=600,
-                   help="su_fail_then_success: basaridan geriye bakma suresi (saniye). "
-                        "Varsayilan 600.")
-    p.add_argument("--allow", action="append", default=None, metavar="IP",
-                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
-                        "Yalnizca kaynak IP'si olan olaylari etkiler; yerel sudo/su alarmlarini bastirmaz.")
+    # 14 tespit bayragi ortak tanimdan gelir (pano ile ayni ad/tip/varsayilan/sira).
+    add_detection_arguments(p)
     p.add_argument("--quiet", action="store_true",
                    help="Sadece alarmlari goster; ozet ve IP tablosunu atla.")
     p.add_argument("--no-color", action="store_true",
@@ -209,24 +177,10 @@ def run(argv: Optional[List[str]] = None, out=sys.stdout) -> int:
     store.unparsed_count = len(unparsed)
 
     # --- 3) Tespit: tum kurallari calistir (engine siralamayi yapar) ---
+    # Config yalnizca veri tasir; gecersiz esikleri kurallar reddeder (asagida ValueError).
+    config = detection_config_from_namespace(args)
     try:
-        alerts = run_detections(
-            events,
-            window=args.window,
-            threshold=args.threshold,
-            enum_threshold=args.enum_threshold,
-            allowlist=args.allow,
-            min_fails=args.min_fails,
-            success_window=args.success_window,
-            anomaly_k=args.anomaly_k,
-            anomaly_min_volume=args.anomaly_min_volume,
-            sudo_window=args.sudo_window,
-            sudo_threshold=args.sudo_threshold,
-            su_window=args.su_window,
-            su_threshold=args.su_threshold,
-            su_success_min_fails=args.su_success_min_fails,
-            su_success_window=args.su_success_window,
-        )
+        alerts = run_detections_with_config(events, config)
     except ValueError as exc:
         # Kurallar anlamsiz esikleri (negatif pencere, threshold<1) reddeder.
         # Bunu traceback olarak degil, kullanim hatasi olarak bildiririz.

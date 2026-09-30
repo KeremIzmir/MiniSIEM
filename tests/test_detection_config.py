@@ -189,3 +189,161 @@ def test_legacy_allowlist_list_becomes_tuple_in_config_semantics():
     legacy = run_detections(events, allowlist=["192.0.2.20", "192.0.2.20"])
     native = run_detections_with_config(events, DetectionConfig(allowlist=("192.0.2.20",)))
     assert _keys(legacy) == _keys(native)
+
+
+# ------------------- ortak komut satiri secenekleri (CLI + pano) -------------------- #
+import argparse
+
+import cli
+from detection.options import add_detection_arguments, detection_config_from_namespace
+
+flask = pytest.importorskip("flask", reason="pano parser'i icin flask gerekir")
+from dashboard.app import build_arg_parser, build_store, build_store_with_config  # noqa: E402
+
+# Bugunku sozlesme: (option, dest, type, default, action sinifi, metavar) — sirasiyla.
+DETECTION_OPTIONS = [
+    ("--window", "window", int, 300, argparse._StoreAction, None),
+    ("--threshold", "threshold", int, 5, argparse._StoreAction, None),
+    ("--enum-threshold", "enum_threshold", int, 5, argparse._StoreAction, None),
+    ("--min-fails", "min_fails", int, 3, argparse._StoreAction, None),
+    ("--success-window", "success_window", int, 600, argparse._StoreAction, None),
+    ("--anomaly-k", "anomaly_k", float, 2.0, argparse._StoreAction, None),
+    ("--anomaly-min-volume", "anomaly_min_volume", int, 5, argparse._StoreAction, None),
+    ("--sudo-window", "sudo_window", int, 300, argparse._StoreAction, None),
+    ("--sudo-threshold", "sudo_threshold", int, 3, argparse._StoreAction, None),
+    ("--su-window", "su_window", int, 300, argparse._StoreAction, None),
+    ("--su-threshold", "su_threshold", int, 3, argparse._StoreAction, None),
+    ("--su-success-min-fails", "su_success_min_fails", int, 3, argparse._StoreAction, None),
+    ("--su-success-window", "su_success_window", int, 600, argparse._StoreAction, None),
+    ("--allow", "allow", None, None, argparse._AppendAction, "IP"),
+]
+DETECTION_FLAGS = [o[0] for o in DETECTION_OPTIONS]
+
+
+def _optionals(parser):
+    return [a for a in parser._actions if a.option_strings and a.dest != "help"]
+
+
+def _detection_actions(parser):
+    return [a for a in _optionals(parser) if a.option_strings[0] in DETECTION_FLAGS]
+
+
+def _describe(action):
+    return (action.option_strings[0], action.dest, action.type, action.default, type(action),
+            action.metavar)
+
+
+@pytest.mark.parametrize("make", [cli.build_parser, build_arg_parser, ], ids=["cli", "dashboard"])
+def test_detection_options_contract(make):
+    actions = _detection_actions(make())
+    assert [_describe(a) for a in actions] == DETECTION_OPTIONS
+    assert all(a.option_strings == [a.option_strings[0]] for a in actions)
+    assert all(a.nargs is None and a.const is None for a in actions)
+
+
+def test_cli_and_dashboard_detection_actions_identical_including_help():
+    c, d = _detection_actions(cli.build_parser()), _detection_actions(build_arg_parser())
+    assert [(_describe(a), a.nargs, a.const, a.help) for a in c] == \
+           [(_describe(a), a.nargs, a.const, a.help) for a in d]
+
+
+def test_cli_option_order_preserved():
+    flags = [a.option_strings[0] for a in _optionals(cli.build_parser())]
+    assert flags == ["--json"] + DETECTION_FLAGS + ["--quiet", "--no-color", "--version"]
+
+
+def test_dashboard_option_order_preserved():
+    flags = [a.option_strings[0] for a in _optionals(build_arg_parser())]
+    assert flags == ["--host", "--port"] + DETECTION_FLAGS + ["--debug", "--version"]
+
+
+def test_shared_helper_adds_only_detection_options():
+    p = argparse.ArgumentParser()
+    add_detection_arguments(p)
+    assert [a.option_strings[0] for a in _optionals(p)] == DETECTION_FLAGS
+
+
+def test_help_defaults_come_from_config():
+    helps = {a.dest: a.help for a in _detection_actions(cli.build_parser())}
+    assert helps["window"].endswith(f"Varsayilan {DEFAULT_DETECTION_CONFIG.window}.")
+    assert helps["anomaly_k"].endswith(f"Varsayilan {DEFAULT_DETECTION_CONFIG.anomaly_k}.")
+
+
+@pytest.mark.parametrize("make", [cli.build_parser, build_arg_parser], ids=["cli", "dashboard"])
+def test_namespace_defaults_map_to_default_config(make):
+    args = make().parse_args(["auth.log"])
+    assert args.allow is None
+    assert detection_config_from_namespace(args) == DEFAULT_DETECTION_CONFIG
+
+
+@pytest.mark.parametrize("make", [cli.build_parser, build_arg_parser], ids=["cli", "dashboard"])
+def test_namespace_all_fields_mapped_explicitly(make):
+    argv = ["auth.log", "--window", "11", "--threshold", "12", "--enum-threshold", "13",
+            "--min-fails", "14", "--success-window", "15", "--anomaly-k", "1.5",
+            "--anomaly-min-volume", "16", "--sudo-window", "17", "--sudo-threshold", "18",
+            "--su-window", "19", "--su-threshold", "20", "--su-success-min-fails", "21",
+            "--su-success-window", "22", "--allow", "192.0.2.1"]
+    assert detection_config_from_namespace(make().parse_args(argv)) == DetectionConfig(
+        window=11, threshold=12, enum_threshold=13, allowlist=("192.0.2.1",), min_fails=14,
+        success_window=15, anomaly_k=1.5, anomaly_min_volume=16, sudo_window=17,
+        sudo_threshold=18, su_window=19, su_threshold=20, su_success_min_fails=21,
+        su_success_window=22)
+
+
+@pytest.mark.parametrize("make", [cli.build_parser, build_arg_parser], ids=["cli", "dashboard"])
+def test_repeated_allow_keeps_order_and_duplicates(make):
+    args = make().parse_args(["auth.log", "--allow", "B", "--allow", "A", "--allow", "B"])
+    assert args.allow == ["B", "A", "B"]
+    assert detection_config_from_namespace(args).allowlist == ("B", "A", "B")
+
+
+def _imported_modules(module) -> set:
+    import ast
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.add(node.module)
+    return names
+
+
+def test_dependency_direction():
+    # config: yalnizca stdlib; options: argparse + config (motoru import ETMEZ).
+    import detection.config as config_module
+    import detection.options as options_module
+    assert _imported_modules(config_module) == {"dataclasses", "typing"}
+    assert _imported_modules(options_module) == {"argparse", "detection.config"}
+
+
+# --------------------- pano: config tabanli yol + eski build_store ------------------- #
+def test_build_store_signature_frozen():
+    params = inspect.signature(build_store).parameters
+    assert list(params) == ["logfile"] + FIELDS
+    assert [params[name].default for name in FIELDS] == DEFAULTS
+    assert all(p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for p in params.values())
+
+
+def _store_view(store):
+    return (store.summary(), [e.to_dict() for e in store.events], store.alerts)
+
+
+@pytest.mark.parametrize("overrides", [
+    {}, {"sudo_threshold": 2}, {"su_threshold": 1, "su_window": 10},
+    {"allowlist": ("192.0.2.10",)}, {"min_fails": 99}, {"threshold": 3, "anomaly_k": 1.0},
+], ids=lambda o: ",".join(o) or "default")
+def test_build_store_legacy_equals_config_native(overrides):
+    legacy = build_store(str(SAMPLE_LOG), **_legacy_kwargs(overrides))
+    native = build_store_with_config(str(SAMPLE_LOG), DetectionConfig(**overrides))
+    assert _store_view(legacy) == _store_view(native)
+
+
+def test_build_store_positional_call_still_works():
+    positional = build_store(str(SAMPLE_LOG), 300, 5, 5, None, 3, 600, 2.0, 5, 300, 3, 300, 3, 3, 600)
+    assert _store_view(positional) == _store_view(build_store(str(SAMPLE_LOG)))
+
+
+def test_build_store_with_config_invalid_config_raises_rule_error():
+    with pytest.raises(ValueError, match="sudo threshold en az 1 olmali: 0"):
+        build_store_with_config(str(SAMPLE_LOG), DetectionConfig(sudo_threshold=0))

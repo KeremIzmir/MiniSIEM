@@ -36,46 +36,65 @@ except ImportError:  # pragma: no cover
 
 from parser.auth_parser import parse_file
 from storage.store import EventStore
-from detection.engine import run_detections
+from detection.config import DEFAULT_DETECTION_CONFIG, DetectionConfig
+from detection.engine import run_detections_with_config
+from detection.options import add_detection_arguments, detection_config_from_namespace
 
 __version__ = "1.0.0"
 
 
-def build_store(
-    logfile: str,
-    window: int = 300,
-    threshold: int = 5,
-    enum_threshold: int = 5,
-    allowlist: Optional[list] = None,
-    min_fails: int = 3,
-    success_window: int = 600,
-    anomaly_k: float = 2.0,
-    anomaly_min_volume: int = 5,
-    sudo_window: int = 300,
-    sudo_threshold: int = 3,
-    su_window: int = 300,
-    su_threshold: int = 3,
-    su_success_min_fails: int = 3,
-    su_success_window: int = 600,
-) -> EventStore:
+def build_store_with_config(logfile: str, config: DetectionConfig) -> EventStore:
     """
     Log dosyasini parse edip tum kurallari calistirir ve dolu bir EventStore dondurur.
 
     CLI'deki ile AYNI akis; ayri tutuyoruz cunku pano bunu acilista bir kez,
     CLI ise her calistirmada cagirir. Mantik (engine) ikisinde de ortak.
-    Parametreler CLI ile AYNI yuzeyi sunar — iki arayuz ayni ayarlari kabul etsin.
+    Kanonik (config tabanli) yol: panonun main()'i bunu kullanir.
     """
     events, unparsed = parse_file(logfile)
     store = EventStore()
     store.add_events(events)
     store.unparsed_count = len(unparsed)
 
-    alerts = run_detections(
-        events,
+    alerts = run_detections_with_config(events, config)
+    for a in alerts:
+        store.add_alert(a)
+    return store
+
+
+# Eski imzanin varsayilanlari kanonik kaynaktan okunur (literal tekrari yok).
+_D = DEFAULT_DETECTION_CONFIG
+
+
+def build_store(
+    logfile: str,
+    window: int = _D.window,
+    threshold: int = _D.threshold,
+    enum_threshold: int = _D.enum_threshold,
+    allowlist: Optional[list] = _D.allowlist,
+    min_fails: int = _D.min_fails,
+    success_window: int = _D.success_window,
+    anomaly_k: float = _D.anomaly_k,
+    anomaly_min_volume: int = _D.anomaly_min_volume,
+    sudo_window: int = _D.sudo_window,
+    sudo_threshold: int = _D.sudo_threshold,
+    su_window: int = _D.su_window,
+    su_threshold: int = _D.su_threshold,
+    su_success_min_fails: int = _D.su_success_min_fails,
+    su_success_window: int = _D.su_success_window,
+) -> EventStore:
+    """
+    Uyumluluk adaptoru: mevcut build_store(...) cagrilari (keyword ve positional) aynen
+    calissin diye bugunku 14 ayarlik imza korunur. Yalnizca DetectionConfig kurar ve
+    build_store_with_config'e devreder.
+
+    Bu imza DONDURULMUSTUR: yeni ayarlar yalnizca DetectionConfig ile sunulur. Deprecated DEGILDIR.
+    """
+    config = DetectionConfig(
         window=window,
         threshold=threshold,
         enum_threshold=enum_threshold,
-        allowlist=allowlist,
+        allowlist=None if allowlist is None else tuple(allowlist),
         min_fails=min_fails,
         success_window=success_window,
         anomaly_k=anomaly_k,
@@ -87,9 +106,7 @@ def build_store(
         su_success_min_fails=su_success_min_fails,
         su_success_window=su_success_window,
     )
-    for a in alerts:
-        store.add_alert(a)
-    return store
+    return build_store_with_config(logfile, config)
 
 
 def create_app(store: EventStore) -> Flask:
@@ -141,32 +158,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1",
                    help="Dinlenecek arayuz. Varsayilan 127.0.0.1 (yerel). Disa acmak icin 0.0.0.0.")
     p.add_argument("--port", type=int, default=5000, help="Dinlenecek port. Varsayilan 5000.")
-    p.add_argument("--window", type=int, default=300, help="Brute-force pencere (saniye).")
-    p.add_argument("--threshold", type=int, default=5, help="Brute-force esigi.")
-    p.add_argument("--enum-threshold", type=int, default=5, help="Enumeration esigi.")
-    p.add_argument("--min-fails", type=int, default=3,
-                   help="fail_then_success: min. basarisizlik sayisi. Varsayilan 3.")
-    p.add_argument("--success-window", type=int, default=600,
-                   help="fail_then_success: geriye bakma suresi (saniye). Varsayilan 600.")
-    p.add_argument("--anomaly-k", type=float, default=2.0,
-                   help="Anomali esigi (standart sapma katsayisi). Varsayilan 2.0.")
-    p.add_argument("--anomaly-min-volume", type=int, default=5,
-                   help="Anomali icin min. olay sayisi. Varsayilan 5.")
-    p.add_argument("--sudo-window", type=int, default=300,
-                   help="sudo_brute_force: ayni host+kullanici penceresi (saniye). Varsayilan 300.")
-    p.add_argument("--sudo-threshold", type=int, default=3,
-                   help="sudo_brute_force: min. basarisiz sudo sayisi. Varsayilan 3.")
-    p.add_argument("--su-window", type=int, default=300,
-                   help="su_brute_force: ayni host+aktor penceresi (saniye). Varsayilan 300.")
-    p.add_argument("--su-threshold", type=int, default=3,
-                   help="su_brute_force: min. basarisiz su sayisi. Varsayilan 3.")
-    p.add_argument("--su-success-min-fails", type=int, default=3,
-                   help="su_fail_then_success: basaridan onceki min. basarisiz su. Varsayilan 3.")
-    p.add_argument("--su-success-window", type=int, default=600,
-                   help="su_fail_then_success: geriye bakma suresi (saniye). Varsayilan 600.")
-    p.add_argument("--allow", action="append", default=None, metavar="IP",
-                   help="Guvenilir IP (tespitten once elenir). Birden cok kez verilebilir. "
-                        "Yerel sudo/su alarmlarini bastirmaz.")
+    # 14 tespit bayragi ortak tanimdan gelir (CLI ile ayni ad/tip/varsayilan/sira).
+    add_detection_arguments(p)
     p.add_argument("--debug", action="store_true",
                    help="Flask debug modu (SADECE gelistirme). Varsayilan KAPALI.")
     p.add_argument("--version", action="version", version=f"mini-siem-dashboard {__version__}")
@@ -178,23 +171,7 @@ def main() -> None:
     args = build_arg_parser().parse_args()
 
     try:
-        store = build_store(
-            args.logfile,
-            window=args.window,
-            threshold=args.threshold,
-            enum_threshold=args.enum_threshold,
-            allowlist=args.allow,
-            min_fails=args.min_fails,
-            success_window=args.success_window,
-            anomaly_k=args.anomaly_k,
-            anomaly_min_volume=args.anomaly_min_volume,
-            sudo_window=args.sudo_window,
-            sudo_threshold=args.sudo_threshold,
-            su_window=args.su_window,
-            su_threshold=args.su_threshold,
-            su_success_min_fails=args.su_success_min_fails,
-            su_success_window=args.su_success_window,
-        )
+        store = build_store_with_config(args.logfile, detection_config_from_namespace(args))
     except FileNotFoundError:
         print(f"HATA: dosya bulunamadi: {args.logfile}", file=sys.stderr)
         sys.exit(2)

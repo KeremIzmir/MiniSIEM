@@ -559,3 +559,30 @@ def test_json_report_keeps_legacy_alias(tmp_path):
     assert code == 1
     assert (s["toplam_olay"], s["basarisiz_kimlik_dogrulama"], s["basarisiz_giris"],
             s["benzersiz_ip"], s["alarm_sayisi"], s["unparsed"]) == (36, 31, 31, 6, 6, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Ortak tespit secenekleri: CLI config tabanli yolu kullanir, davranis ayni kalir
+# --------------------------------------------------------------------------- #
+def test_cli_overrides_match_config_native_engine(tmp_path):
+    from detection.config import DetectionConfig
+    from detection.engine import run_detections_with_config
+    from parser.auth_parser import parse_file
+
+    code, data = _json_report(tmp_path, "--threshold", "7", "--allow", "192.0.2.10")
+    events, _ = parse_file(str(SAMPLE_LOG))
+    expected = run_detections_with_config(events, DetectionConfig(threshold=7, allowlist=("192.0.2.10",)))
+    assert data["alerts"] == [a.to_dict() for a in expected]
+    assert code == (1 if expected else 0)
+
+
+def test_missing_file_reported_before_invalid_config(capsys):
+    code, _ = _run(["yok_boyle_bir_dosya.log", "--threshold", "0"])
+    assert code == 2
+    assert "dosya bulunamadi" in capsys.readouterr().err
+
+
+def test_invalid_config_message_unchanged(capsys):
+    code, _ = _run([str(SAMPLE_LOG), "--window", "-1", "--sudo-window", "-1"])
+    assert code == 2
+    assert "HATA: gecersiz tespit ayari: window negatif olamaz: -1" in capsys.readouterr().err
