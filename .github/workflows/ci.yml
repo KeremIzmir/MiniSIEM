@@ -18,14 +18,17 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Acik major OS etiketi: ubuntu-latest 2026-10/11'de 24.04 -> 26.04
+    # gecisi yapacak. CI ortami bilincli olarak ubuntu-26.04 kullanir.
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
-        # README "Python 3.11+" diyor; iddiayi her surumde gercekten dogrula.
+        # pyproject "requires-python >=3.11" diyor; desteklenen tum kararli minor
+        # surumler (3.11-3.14) gercekten dogrulanir. Onsurumler bu matrise girmez.
         # Gelistirme Windows'ta yapiliyor — Linux CI ayrica yol ayraci ve
         # buyuk/kucuk harf duyarliligi varsayimlarini yakalar.
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       # Aksiyonlar degistirilemez tam commit SHA'sina sabitlenir (tag'ler tasinabilir);
