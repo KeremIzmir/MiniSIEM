@@ -116,3 +116,35 @@ def test_to_json_is_utf8_readable():
     store = EventStore()
     store.add_alert({"description": "basarisiz giris denemesi - sunucu cokusu"})
     assert "basarisiz" in store.to_json()
+
+
+
+# --- sudo parola-denemesi ozeti: genel basarisizlik sayaclarina girmez ------------ #
+
+def _sudo_fail_and_summary():
+    fail = make_event(0, event_type=EventType.SUDO_FAILURE, ip=None, user="alice", process="sudo")
+    summary = make_event(1, event_type=EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, ip=None,
+                         user="alice", process="sudo")
+    summary.actor_username = "alice"
+    summary.attempt_count = 3
+    return fail, summary
+
+
+def test_summary_counted_as_event_but_not_failure():
+    store = EventStore()
+    store.add_events(list(_sudo_fail_and_summary()))
+    s = store.summary()
+    assert s["toplam_olay"] == 2
+    assert s["basarisiz_giris"] == 1                 # yalnizca birincil PAM hatasi
+    assert s["benzersiz_ip"] == 0
+    assert [e.event_type for e in store.failed_events()] == [EventType.SUDO_FAILURE]
+    assert sum(n for _, n in store.failed_per_minute()) == 1
+
+
+def test_summary_json_includes_attempt_count():
+    store = EventStore()
+    store.add_events(list(_sudo_fail_and_summary()))
+    data = json.loads(store.to_json())
+    by_type = {e["event_type"]: e for e in data["events"]}
+    assert by_type["SUDO_INCORRECT_PASSWORD_SUMMARY"]["attempt_count"] == 3
+    assert by_type["SUDO_FAILURE"]["attempt_count"] is None

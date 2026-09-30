@@ -340,3 +340,19 @@ def test_main_invalid_su_success_config_exits_2(monkeypatch, capsys, tmp_path, f
         app_module.main()
     assert exc.value.code == 2
     assert "gecersiz tespit ayari" in capsys.readouterr().err
+
+
+
+# ------------------------- sudo parola-denemesi ozeti ------------------------- #
+def test_sudo_summary_does_not_inflate_dashboard_failure_card(tmp_path):
+    p = tmp_path / "sudo_sum.log"
+    p.write_text(
+        "Jun  1 05:52:10 web-01 sudo[4242]: pam_unix(sudo:auth): authentication failure; "
+        "logname=alice uid=1000 euid=0 tty=/dev/pts/0 ruser=alice rhost=  user=alice\n"
+        "Jun  1 05:52:12 web-01 sudo[4242]: alice : 3 incorrect password attempts ; "
+        "TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash\n", encoding="utf-8")
+    client = create_app(build_store(str(p))).test_client()
+    summary = client.get("/api/summary").get_json()
+    assert (summary["toplam_olay"], summary["basarisiz_giris"], summary["alarm_sayisi"]) == (2, 1, 0)
+    assert client.get("/api/alerts").get_json() == []
+    assert sum(point["count"] for point in client.get("/api/timeline").get_json()) == 1

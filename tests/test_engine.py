@@ -243,3 +243,31 @@ def test_network_fail_then_success_ignores_su_success():
     assert events[-1].is_success
     assert detect_fail_then_success(events) == []
     assert "fail_then_success" not in _rules(run_detections(events))
+
+
+
+def _sudo_summary_event(offset, count=3, user="bob", ip=None):
+    e = make_event(offset=offset, event_type=EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, ip=ip,
+                   user=user, process="sudo")
+    e.actor_username = user
+    e.attempt_count = count
+    return e
+
+
+def _alert_keys(alerts):
+    return [(a.rule_name, a.severity, a.count, a.time_window, a.description, tuple(a.evidence)) for a in alerts]
+
+
+def test_sudo_summary_never_changes_any_alert():
+    # Karisik birincil olaylar (ag + sudo + su); ozet eklemek alarm listesini DEGISTIRMEZ.
+    base = (make_failures(6, ip="192.0.2.10", step=5) + _fts_events()
+            + _sudo_events(3) + _su_seq(3))
+    with_summary = base + [_sudo_summary_event(35, count=3), _sudo_summary_event(40, count=7, user="eve")]
+    assert _alert_keys(run_detections(with_summary)) == _alert_keys(run_detections(base))
+
+
+def test_sudo_summary_with_allowlist_unchanged():
+    base = _sudo_events(3)
+    with_summary = base + [_sudo_summary_event(25, count=3)]
+    allow = ["192.0.2.1"]
+    assert _alert_keys(run_detections(with_summary, allowlist=allow)) == _alert_keys(run_detections(base, allowlist=allow))
