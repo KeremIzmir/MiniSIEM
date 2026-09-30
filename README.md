@@ -21,6 +21,7 @@ Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Infor
   | `anomalous_ip` | Hacim olarak istatistiksel aykırı (z-score) IP'ler | başarısızlık oranı ≥ %80 ise `high`, değilse `medium` |
   | `sudo_brute_force` | Aynı host'ta aynı kullanıcının kısa pencerede tekrarlanan **başarısız sudo** kimlik doğrulamaları (olası yerel yetki yükseltme) | eşiğin 2 katından az `medium`, fazlası `high` |
   | `su_brute_force` | Aynı host'ta aynı **yerel aktörün** kısa pencerede tekrarlanan **başarısız `su`** denemeleri; aktörün farklı hedef hesaplara denemeleri tek grupta birleşir (olası yerel hesap geçişi veya parola tahmini) | eşiğin 2 katından az `medium`, fazlası `high` |
+  | `su_fail_then_success` | Aynı host'ta aynı **aktörün aynı hedef hesaba** tekrarlanan başarısız `su` denemelerinin ardından util-linux `su`'nun kaydettiği **başarılı geçiş** | daima `high` |
 
   Önem derecesi sabit değildir; her kural bulgunun büyüklüğüne göre hesaplar.
 
@@ -75,6 +76,8 @@ Tespit eşikleri (hepsi isteğe bağlı):
 | `--sudo-threshold N` | 3 | `sudo_brute_force` eşiği (aynı host + kullanıcı) |
 | `--su-window SANIYE` | 300 | `su_brute_force` kayan pencere genişliği |
 | `--su-threshold N` | 3 | `su_brute_force` eşiği (aynı host + aktör) |
+| `--su-success-min-fails N` | 3 | `su_fail_then_success` başarıdan önceki min. başarısızlık (aynı host + aktör + hedef) |
+| `--su-success-window SANIYE` | 600 | `su_fail_then_success` başarıdan geriye bakma süresi |
 
 `sample_auth.log` yalnızca 2 başarısız sudo denemesi içerdiği için `sudo_brute_force` varsayılan ayarlarla tetiklenmez; kuralı görmek için `--sudo-threshold 2` kullanılabilir. Örnek logda `su` satırı yoktur; `su_brute_force` varsayılan örnek sonucunu değiştirmez.
 
@@ -87,7 +90,7 @@ python -m dashboard.app sample_auth.log                # http://127.0.0.1:5000
 python -m dashboard.app sample_auth.log --host 0.0.0.0 --port 8080
 ```
 
-Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--su-window`, `--su-threshold`, `--allow`).
+Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--su-window`, `--su-threshold`, `--su-success-min-fails`, `--su-success-window`, `--allow`).
 
 Pano rotaları: `/` (HTML), `/api/summary`, `/api/alerts`, `/api/timeline` (JSON).
 
@@ -110,13 +113,15 @@ MiniSiem/
 │   ├── anomaly.py         # leave-one-out z-score hacim anomalisi
 │   ├── sudo_brute_force.py # host + kullanıcı bazlı başarısız sudo tespiti
 │   ├── su_brute_force.py  # host + aktör bazlı başarısız su tespiti
+│   ├── su_fail_then_success.py # aynı aktör+hedef için başarısız su ardından başarılı geçiş
+│   ├── sliding_window.py  # ortak "en yoğun kayan pencere" seçicisi (dahili)
 │   └── engine.py          # tüm kuralları çalıştırıp sıralar
 ├── storage/
 │   └── store.py           # EventStore (bellek + JSON, SQLite'a geçişe hazır)
 ├── dashboard/
 │   ├── app.py             # Flask uygulaması (application factory)
 │   └── templates/index.html
-├── tests/                 # 227 test (conftest.py + 11 test modülü)
+├── tests/                 # parser, tespit, storage, engine, CLI ve pano testleri
 ├── .github/workflows/ci.yml
 ├── cli.py                 # komut satırı arayüzü
 ├── sample_auth.log        # örnek log (RFC5737 test IP'leri)
@@ -158,8 +163,8 @@ Her paketin bir `__init__.py` dosyası vardır. Bağımlılık akışı (en az b
 [ LOW  ] brute_force ×3
 ```
 
-Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunur (`sudo_brute_force` ve `su_brute_force` yerel olduğu için IP yerine açıklamada `kullanıcı@host` / `aktör@host` verir). Ek olarak:
-- **Zaman penceresi** `brute_force`, `fail_then_success`, `sudo_brute_force` ve `su_brute_force` alarmlarında bulunur (diğer iki kural zaman değil çeşitlilik/hacim tabanlıdır).
+Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunur (`sudo_brute_force`, `su_brute_force` ve `su_fail_then_success` yerel olduğu için IP yerine açıklamada `kullanıcı@host` / `aktör@host` verir). Ek olarak:
+- **Zaman penceresi** `brute_force`, `fail_then_success`, `sudo_brute_force`, `su_brute_force` ve `su_fail_then_success` alarmlarında bulunur (diğer iki kural zaman değil çeşitlilik/hacim tabanlıdır).
 - **Ham log satırlarından kanıt** `anomalous_ip` dışındaki tüm kurallarda bulunur (o kural istatistik özeti üretir, tek bir satıra dayanmaz).
 
 ---
@@ -176,8 +181,10 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
   - **sudo:** geriye uyumluluk için `username` değişmedi (parolayı yazan aktör: `ruser` → `logname` → `user`); aktör ayrıca `actor_username`'de de tutulur (aktör yoksa boş).
   - **sshd/login gibi diğer PAM olayları:** `username` = hedef hesap, `actor_username` boş.
   - `actor_username` JSON çıktısına eklenmiş yeni bir alandır (mevcut alanlar değişmedi).
-- **`su_brute_force`:** Yalnızca `SU_FAILURE` olaylarını sayar ve `(host, aktör)` bazında gruplar: aynı aktörün farklı hedeflere denemeleri tek grupta birleşir, farklı aktörlerin aynı hedefe (örn. root) tekil hataları birleşmez. Aktörü bilinmeyen olay sayılmaz. Açıklama en yoğun penceredeki hedefleri sıralı ve en fazla 5 tane listeler. Kapsam: yalnızca `su` sürecinin `pam_unix(su:auth)` başarısızlıkları; `su-l`, `runuser`, eski `FAILED SU` satırları ve başarılı `su` oturumları desteklenmez.
+- **`su_brute_force`:** Yalnızca `SU_FAILURE` olaylarını sayar ve `(host, aktör)` bazında gruplar: aynı aktörün farklı hedeflere denemeleri tek grupta birleşir, farklı aktörlerin aynı hedefe (örn. root) tekil hataları birleşmez. Aktörü bilinmeyen olay sayılmaz. Açıklama en yoğun penceredeki hedefleri sıralı ve en fazla 5 tane listeler. Kapsam: `su` sürecinin (syslog etiketi `su`) PAM `authentication failure` satırları; util-linux `su -l` / `su -` da dahildir (PAM servisi `su-l`, etiket yine `su`: `su[PID]: pam_unix(su-l:auth): …`). Ayrı bir `su-l` syslog etiketi, `runuser` ve eski `FAILED SU` satırları desteklenmez.
 - **PAM tekrar özetleri:** `pam_unix`, aynı PAM işlemindeki ek başarısızlıkları `N more authentication failures` özet satırıyla yazabilir. Bu satırlar sayılan olay değildir (çift sayım olmasın diye). Bu yüzden `sudo_brute_force` ve `su_brute_force` tek tek parola istemlerini değil, parser'ın tanıdığı birincil başarısızlık olaylarını sayar.
+- **`SU_SUCCESS` (başarılı su geçişi):** Tek kaynak util-linux `su`'nun kaydıdır: `su[PID]: (to <hedef>) <aktör> on <tty>`. `su` bu satırı PAM kimlik doğrulama, hesap kontrolü (gerekirse süresi dolmuş parola değişimi) ve hedef tutarlılık kontrolü **başarılı olduktan sonra**, kimlik bilgisi ve oturum kurulumundan **önce** yazar. Bu yüzden `SU_SUCCESS` "başarılı geçiş kaydedildi" demektir; parolanın girildiğini ya da kırıldığını (örn. root için `pam_rootok`) veya PAM oturumunun kesin açıldığını **kanıtlamaz**. `username` = hedef, `actor_username` = aktör (boşsa yok). Aktör, başarısız denemedeki PAM `ruser` ile aynı değerdir. PAM `session opened/closed` satırları (aktörü farklı mekanizmadan gelir, boş olabilir, `quiet` seçeneğiyle bastırılabilir) ve `FAILED SU` satırları bilinçli olarak **sayılmaz** (UNKNOWN); böylece tek bir `su` çağrısı iki kez sayılmaz. util-linux dışındaki `su` uygulamalarının başarı kayıtları desteklenmez.
+- **`su_fail_then_success`:** Yalnızca `SU_FAILURE` ve `SU_SUCCESS` olaylarını kullanır ve **tam** `(host, aktör, hedef)` üçlüsüne göre gruplar; aktörü ya da hedefi bilinmeyen olay korelasyona girmez. Başarıdan geriye kapsayıcı pencere içindeki başarısızlıkları sayar (eski denemeler elenir), her başarıdan sonra diziyi sıfırlar ve alarmı daima `high` üretir. `count` yalnızca başarısızlıkları sayar; kanıt son 5 başarısızlık + başarı satırıdır. Aktörün farklı hedefleri taramasını `su_brute_force` yakalar; aynı dizi iki kuralı da tetikleyebilir (farklı anlamlar). Ağ kuralı `fail_then_success` değişmedi ve `SU_SUCCESS` olaylarını almaz. Kaynak IP'si (`rhost`) allowlist'te olan bir `SU_FAILURE` engine tarafından elenir ve korelasyon sayımını düşürebilir.
 - **Genişletme:** Yeni bir kural eklemek = `detection/` altına bir fonksiyon + `engine.py`'ye bir satır. Kuralın ayarları dışarıya açılacaksa, iki arayüz aynı ayar yüzeyini koruyabilsin diye aynı bayraklar hem `cli.py`'ye hem `dashboard/app.py`'ye eklenir.
 
 ---
@@ -194,11 +201,11 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
 
 ```bash
 pip install -r requirements-dev.txt   # pytest + pytest-cov
-pytest                                # 227 test
+pytest                                # tüm testleri çalıştır
 pytest --cov --cov-report=term-missing
 ```
 
-`tests/` altında parser, altı tespit kuralı, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır (kapsam ~%98). Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
+`tests/` altında parser, yedi tespit kuralı, ortak pencere seçicisi, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır; güncel test sayısı ve kapsam için `pytest --cov` çıktısına bakın. Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
 
 `.github/workflows/ci.yml`, `main` hedefli pull request'lerde ve `main` branch'ine yapılan push/merge'lerde testleri Python 3.11–3.13 üzerinde, Linux'ta çalıştırır; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
 
