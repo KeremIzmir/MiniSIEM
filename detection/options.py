@@ -36,10 +36,10 @@ def add_detection_arguments(parser: argparse.ArgumentParser) -> None:
                         help="fail_then_success: basaridan geriye bakma suresi (saniye). "
                              f"Varsayilan {_D.success_window}.")
     parser.add_argument("--anomaly-k", type=float, default=_D.anomaly_k,
-                        help="Anomali esigi: kac standart sapma ustu aykiri sayilsin. "
-                             f"Varsayilan {_D.anomaly_k}.")
+                        help="Anomali esigi: kac standart sapma ustu aykiri sayilsin "
+                             f"(negatif olmayan sonlu sayi). Varsayilan {_D.anomaly_k}.")
     parser.add_argument("--anomaly-min-volume", type=int, default=_D.anomaly_min_volume,
-                        help="Anomali icin gereken min. mutlak olay sayisi. "
+                        help="Anomali icin gereken min. mutlak olay sayisi (en az 1). "
                              f"Varsayilan {_D.anomaly_min_volume}.")
     parser.add_argument("--sudo-window", type=int, default=_D.sudo_window,
                         help="sudo_brute_force: ayni host+kullanici basarisiz sudo penceresi (saniye). "

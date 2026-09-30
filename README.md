@@ -70,8 +70,8 @@ Tespit eşikleri (hepsi isteğe bağlı):
 | `--enum-threshold N` | 5 | `user_enumeration` farklı kullanıcı eşiği |
 | `--min-fails N` | 3 | `fail_then_success` min. başarısızlık |
 | `--success-window SANIYE` | 600 | `fail_then_success` geriye bakma süresi |
-| `--anomaly-k KAT` | 2.0 | `anomalous_ip` standart sapma katsayısı |
-| `--anomaly-min-volume N` | 5 | `anomalous_ip` min. mutlak olay sayısı |
+| `--anomaly-k KAT` | 2.0 | `anomalous_ip` standart sapma katsayısı (sonlu, >= 0) |
+| `--anomaly-min-volume N` | 5 | `anomalous_ip` min. mutlak olay sayısı (>= 1) |
 | `--sudo-window SANIYE` | 300 | `sudo_brute_force` kayan pencere genişliği |
 | `--sudo-threshold N` | 3 | `sudo_brute_force` eşiği (aynı host + kullanıcı) |
 | `--su-window SANIYE` | 300 | `su_brute_force` kayan pencere genişliği |
@@ -201,7 +201,7 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
 
 - **Terminal kaçış dizisi enjeksiyonu (CWE-117):** Bir SIEM'in işlediği log satırları saldırgan kontrolündedir — `Invalid user <ESC>[2J` gibi bir kullanıcı adıyla SSH'a bağlanmak yeterlidir. Ham satır kanıt olarak doğrudan basılırsa bu diziler analistin terminalinde çalışır. CLI, gösterimden hemen önce kontrol karakterlerini görünür `\xNN` biçimine çevirir. `--json` çıktısı ham veriyi korur (JSON kaçışları zaten güvenlidir).
 - **Pano:** Jinja2 otomatik HTML-escape yapar; log satırındaki `<script>` etiket olarak değil metin olarak render edilir.
-- **Geçersiz tespit ayarları** (negatif pencere, `threshold < 1`) traceback yerine çıkış kodu `2` ile reddedilir.
+- **Geçersiz tespit ayarları** (negatif pencere, `threshold < 1`, negatif ya da sonlu olmayan (`nan`, `inf`) `--anomaly-k`, `--anomaly-min-volume < 1`) traceback yerine çıkış kodu `2` ile reddedilir. Doğrulama her kuralın başında yapılır; bu yüzden olay olmasa da uygulanır ve Python API'si (`run_detections`, `build_store`) de aynı `ValueError`'ı verir. `NaN` bir alarm eşiğini sessizce işlevsiz bırakabileceği için özellikle reddedilir.
 
 ---
 
