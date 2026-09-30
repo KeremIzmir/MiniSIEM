@@ -22,6 +22,7 @@ class EventType(StrEnum):
     INVALID_USER = "INVALID_USER"         # "Invalid user X from IP" — var olmayan kullanici
     SUDO_FAILURE = "SUDO_FAILURE"         # sudo authentication failure
     SU_FAILURE = "SU_FAILURE"             # su authentication failure (hedef hesaba gecis)
+    SU_SUCCESS = "SU_SUCCESS"             # util-linux su basari kaydi: "(to hedef) aktor on tty"
     AUTH_FAILURE = "AUTH_FAILURE"         # genel PAM authentication failure
     UNKNOWN = "UNKNOWN"                    # taninamayan ama olay olabilecek satir
 
@@ -82,5 +83,13 @@ class Event:
 
     @property
     def is_success(self) -> bool:
-        """Bu olay BASARILI bir giris mi? ('basarisiz sonra basarili' kalibi icin onemli)"""
-        return self.event_type == EventType.ACCEPTED_LOGIN
+        """
+        Bu olay BASARILI bir kimlik dogrulama / hesap gecisi olayi mi?
+        ('basarisiz sonra basarili' kaliplari icin onemli)
+
+          - ACCEPTED_LOGIN: basarili SSH girisi.
+          - SU_SUCCESS    : util-linux su, kimlik dogrulama ve hesap kontrolunu gecip hedef
+                            hesaba gecisi basarili olarak kaydetti. Parolanin girildigini ya
+                            da PAM oturumunun acildigini KANITLAMAZ.
+        """
+        return self.event_type in (EventType.ACCEPTED_LOGIN, EventType.SU_SUCCESS)
