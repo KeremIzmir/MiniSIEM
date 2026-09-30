@@ -44,7 +44,7 @@ veya paket olarak (`mini-siem` ve `mini-siem-dashboard` komutlarını PATH'e ekl
 pip install .          # ya da geliştirme için: pip install -e .
 ```
 
-Python 3.11+ gerekir (`StrEnum` kullanılıyor); CI 3.11 / 3.12 / 3.13 üzerinde koşar.
+Python 3.11+ gerekir (`StrEnum` kullanılıyor); CI 3.11 / 3.12 / 3.13 / 3.14 üzerinde koşar.
 
 ---
 
@@ -215,7 +215,7 @@ pytest --cov --cov-report=term-missing
 
 `tests/` altında parser, yedi tespit kuralı, ortak pencere seçicisi, storage, engine, CLI ve web panosu için birim/uçtan-uca testleri vardır; güncel test sayısı ve kapsam için `pytest --cov` çıktısına bakın. Tespit kuralları gerçek saate ve örnek dosyaya bağlı kalmadan test edilebilsin diye `tests/conftest.py` doğrudan `Event` üreten bir fabrika (`make_event`) sunar.
 
-`.github/workflows/ci.yml`, `main` hedefli pull request'lerde ve `main` branch'ine yapılan push/merge'lerde testleri Python 3.11–3.13 üzerinde, Linux'ta çalıştırır; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
+`.github/workflows/ci.yml`, `main` hedefli pull request'lerde ve `main` branch'ine yapılan push/merge'lerde testleri Python 3.11–3.14 üzerinde, temsilî bir Linux CI ortamında (GitHub-hosted Ubuntu 26.04) çalıştırır; örnek logda CLI'ın tam olarak `1` çıkış koduyla alarm verdiğini, paketin kurulabildiğini ve pano şablonunun **kurulu** pakete girdiğini doğrular.
 
 ---
 
