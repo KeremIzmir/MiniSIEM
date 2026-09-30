@@ -356,3 +356,39 @@ def test_sudo_summary_does_not_inflate_dashboard_failure_card(tmp_path):
     assert (summary["toplam_olay"], summary["basarisiz_giris"], summary["alarm_sayisi"]) == (2, 1, 0)
     assert client.get("/api/alerts").get_json() == []
     assert sum(point["count"] for point in client.get("/api/timeline").get_json()) == 1
+
+
+
+# ------------- kanonik ozet anahtari: basarisiz_kimlik_dogrulama -------------- #
+def test_api_summary_emits_canonical_and_legacy_failure_keys(client):
+    data = client.get("/api/summary").get_json()
+    assert data["basarisiz_kimlik_dogrulama"] == data["basarisiz_giris"] == 3
+    assert (data["toplam_olay"], data["benzersiz_ip"], data["alarm_sayisi"], data["unparsed"]) == (4, 3, 1, 3)
+    assert set(data) == {"toplam_olay", "basarisiz_kimlik_dogrulama", "basarisiz_giris",
+                         "benzersiz_ip", "alarm_sayisi", "unparsed"}
+
+
+def test_index_uses_canonical_failure_label(client):
+    body = client.get("/").get_data(as_text=True)
+    assert '<div class="n">3</div><div class="l">Basarisiz kimlik dogrulama</div>' in body
+    assert "Dakika bazinda basarisiz kimlik dogrulama" in body
+    assert "basarisiz giris" not in body.lower()
+
+
+def test_index_card_reads_canonical_key(store):
+    # Ilk taraf sablon legacy alias'a BAGLI olmamali: alias'siz ozetle de dogru sayiyi basar.
+    class CanonicalOnlyStore(EventStore):
+        def summary(self):
+            s = super().summary()
+            s.pop("basarisiz_giris", None)
+            return s
+
+    only = CanonicalOnlyStore()
+    only.add_events(store.events)
+    body = create_app(only).test_client().get("/").get_data(as_text=True)
+    assert '<div class="n">3</div><div class="l">Basarisiz kimlik dogrulama</div>' in body
+
+
+def test_timeline_unchanged_by_summary_key_migration(client):
+    assert client.get("/api/timeline").get_json() == [{"t": "2026-06-01 05:00", "count": 2},
+                                                      {"t": "2026-06-01 05:01", "count": 1}]

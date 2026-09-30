@@ -148,3 +148,67 @@ def test_summary_json_includes_attempt_count():
     by_type = {e["event_type"]: e for e in data["events"]}
     assert by_type["SUDO_INCORRECT_PASSWORD_SUMMARY"]["attempt_count"] == 3
     assert by_type["SUDO_FAILURE"]["attempt_count"] is None
+
+
+
+# --- kanonik basarisiz_kimlik_dogrulama + legacy basarisiz_giris alias'i ------- #
+# Kanonik anahtar Event.is_failure taksonomisini sayar; eski anahtar geriye uyumluluk
+# icin AYNI degerle uretilmeye devam eder (deprecated alias, runtime uyarisi yok).
+
+_PRIMARY_FAILURES = [EventType.FAILED_PASSWORD, EventType.INVALID_USER, EventType.SUDO_FAILURE,
+                     EventType.SU_FAILURE, EventType.AUTH_FAILURE]
+_NON_FAILURES = [EventType.ACCEPTED_LOGIN, EventType.SU_SUCCESS,
+                 EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, EventType.UNKNOWN]
+
+
+def test_summary_emits_canonical_and_legacy_failure_keys():
+    s = _store_with_mixed_events().summary()
+    assert "basarisiz_kimlik_dogrulama" in s
+    assert "basarisiz_giris" in s
+    assert s["basarisiz_kimlik_dogrulama"] == s["basarisiz_giris"] == 3
+
+
+def test_failure_keys_zero_without_failures():
+    s = EventStore().summary()
+    assert s["basarisiz_kimlik_dogrulama"] == s["basarisiz_giris"] == 0
+
+
+def test_failure_keys_count_every_primary_failure_type():
+    store = EventStore()
+    store.add_events([make_event(offset=i, event_type=t) for i, t in enumerate(_PRIMARY_FAILURES)])
+    s = store.summary()
+    assert s["basarisiz_kimlik_dogrulama"] == s["basarisiz_giris"] == 5
+
+
+def test_failure_keys_exclude_successes_summaries_and_unknown():
+    store = EventStore()
+    store.add_events([make_event(offset=0, event_type=EventType.SUDO_FAILURE)]
+                     + [make_event(offset=i + 1, event_type=t) for i, t in enumerate(_NON_FAILURES)])
+    s = store.summary()
+    assert s["toplam_olay"] == 5
+    assert s["basarisiz_kimlik_dogrulama"] == s["basarisiz_giris"] == 1
+
+
+def test_failure_count_is_computed_once_for_both_keys(monkeypatch):
+    # Iki anahtar tek hesaplamadan gelmeli; bagimsiz hesaplama drift'e kapi acar.
+    store = _store_with_mixed_events()
+    calls = []
+    original = store.failed_events
+
+    def spy():
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(store, "failed_events", spy)
+    store.summary()
+    assert len(calls) == 1
+
+
+def test_json_export_emits_both_failure_keys():
+    store = _store_with_mixed_events()
+    data = json.loads(store.to_json())
+    summary = data["summary"]
+    assert summary["basarisiz_kimlik_dogrulama"] == 3
+    assert summary["basarisiz_giris"] == 3                          # eski tuketici calismaya devam eder
+    assert summary["basarisiz_kimlik_dogrulama"] == summary["basarisiz_giris"]
+    assert len(data["events"]) == 4 and data["alerts"] == []

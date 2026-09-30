@@ -77,7 +77,7 @@
     <!-- ============ OZET KARTLARI ============ -->
     <div class="cards">
       <div class="card"><div class="n">{{ summary.toplam_olay }}</div><div class="l">Toplam olay</div></div>
-      <div class="card"><div class="n">{{ summary.basarisiz_giris }}</div><div class="l">Basarisiz giris</div></div>
+      <div class="card"><div class="n">{{ summary.basarisiz_kimlik_dogrulama }}</div><div class="l">Basarisiz kimlik dogrulama</div></div>
       <div class="card"><div class="n">{{ summary.benzersiz_ip }}</div><div class="l">Benzersiz IP</div></div>
       <div class="card warn"><div class="n">{{ summary.alarm_sayisi }}</div><div class="l">Alarm</div></div>
       {% if summary.unparsed %}
@@ -117,7 +117,7 @@
 
     <!-- ============ ZAMAN SERISI ============ -->
     <section>
-      <h2>Dakika bazinda basarisiz giris</h2>
+      <h2>Dakika bazinda basarisiz kimlik dogrulama</h2>
       {% if timeline %}
         {% set maxc = timeline | map(attribute=1) | max %}
         <div class="bars">
