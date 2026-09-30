@@ -197,3 +197,12 @@ def test_negative_window_rejected(events):
 def test_zero_threshold_rejected(events):
     with pytest.raises(ValueError):
         detect_sudo_brute_force(events if events is not None else sudo_fails(3), threshold=0)
+
+
+def test_equal_density_tie_keeps_earliest_window():
+    # Iki ayri pencere ayni yogunlukta: ILK (erken) pencere kazanir.
+    first = sudo_fails(3, step=5)                   # 0, 5, 10
+    second = sudo_fails(3, step=5, start=100)       # 100, 105, 110
+    a = detect_sudo_brute_force(second + first, window=10)[0]
+    assert a.evidence == [e.raw_line for e in first]
+    assert a.time_window == "05:00:00-05:00:10 (10s)"

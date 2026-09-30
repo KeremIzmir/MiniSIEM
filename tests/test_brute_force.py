@@ -89,3 +89,49 @@ def test_window_zero_only_groups_same_second_events():
     assert len(detect_brute_force(same_second, window=0, threshold=5)) == 1
     spread = make_failures(5, ip="192.0.2.1", step=1)
     assert detect_brute_force(spread, window=0, threshold=5) == []
+
+
+# --- karakterizasyon: ortak kayan pencere davranisi (refactor oncesi sabitlendi) --- #
+
+def test_unordered_input_same_result():
+    ordered = make_failures(6, ip="192.0.2.1", step=10)
+    shuffled = [ordered[i] for i in (3, 0, 5, 1, 4, 2)]
+    a, b = detect_brute_force(ordered)[0], detect_brute_force(shuffled)[0]
+    assert (a.count, a.severity, a.time_window, a.description, a.evidence) == \
+           (b.count, b.severity, b.time_window, b.description, b.evidence)
+
+
+def test_exact_window_boundary_is_inclusive():
+    # ilk ile son arasi tam 'window' saniye -> ayni pencere.
+    events = make_failures(5, ip="192.0.2.1", step=75)          # 0..300
+    alerts = detect_brute_force(events, window=300, threshold=5)
+    assert len(alerts) == 1 and alerts[0].count == 5
+
+
+def test_window_plus_one_is_outside():
+    events = make_failures(4, ip="192.0.2.1", step=75) + [make_event(offset=301, ip="192.0.2.1")]
+    assert detect_brute_force(events, window=300, threshold=5) == []
+
+
+def test_evidence_comes_from_densest_window_chronologically():
+    sparse = [make_event(offset=o, ip="192.0.2.1") for o in (0, 1000)]
+    dense = make_failures(5, ip="192.0.2.1", step=5, start=2000)
+    alerts = detect_brute_force(list(reversed(sparse + dense)), window=300, threshold=5)
+    assert alerts[0].count == 5
+    assert alerts[0].evidence == [e.raw_line for e in dense]
+
+
+def test_one_alert_per_ip_even_with_many_windows():
+    events = make_failures(5, ip="192.0.2.1", step=5) + make_failures(6, ip="192.0.2.1", step=5, start=3600)
+    alerts = detect_brute_force(events, window=300, threshold=5)
+    assert len(alerts) == 1
+    assert alerts[0].count == 6                                  # en yogun pencere
+
+
+def test_equal_density_tie_keeps_earliest_window():
+    # Iki ayri pencere ayni yogunlukta (3'er olay): ILK bulunan kazanir.
+    first = make_failures(3, ip="192.0.2.1", step=5)            # 0, 5, 10
+    second = make_failures(3, ip="192.0.2.1", step=5, start=100)  # 100, 105, 110
+    alerts = detect_brute_force(second + first, window=10, threshold=3)
+    assert alerts[0].evidence == [e.raw_line for e in first]
+    assert alerts[0].time_window == "05:00:00-05:00:10 (10s)"

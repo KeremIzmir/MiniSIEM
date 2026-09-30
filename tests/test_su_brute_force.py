@@ -211,3 +211,20 @@ def test_negative_window_rejected(events):
 def test_zero_threshold_rejected(events):
     with pytest.raises(ValueError):
         detect_su_brute_force(events if events is not None else su_fails(3), threshold=0)
+
+
+def test_one_alert_per_group_even_with_many_windows():
+    events = su_fails(3) + su_fails(4, start=3600)
+    alerts = detect_su_brute_force(events)
+    assert len(alerts) == 1
+    assert alerts[0].count == 4
+
+
+def test_equal_density_tie_keeps_earliest_window():
+    # Iki esit yogun pencere: ILK pencere kazanir; hedefler de o pencereden gelir.
+    first = [su_fail(o, target=t) for o, t in ((0, "root"), (5, "postgres"), (10, "root"))]
+    second = [su_fail(o, target=t) for o, t in ((100, "deploy"), (105, "backup"), (110, "deploy"))]
+    a = detect_su_brute_force(second + first, window=10)[0]
+    assert a.evidence == [e.raw_line for e in first]
+    assert a.time_window == "05:00:00-05:00:10 (10s)"
+    assert "hedefler: postgres, root;" in a.description
