@@ -460,3 +460,116 @@ def test_accepted_login_is_still_success():
     line = "Jun  1 05:54:00 web-01 sshd[12400]: Accepted password for alice from 198.51.100.5 port 60050 ssh2"
     e = parse_line(line, now=NOW)
     assert e.is_success and not e.is_failure
+
+
+
+# --- sudo "N incorrect password attempt(s)" ozet kaydi ------------------------- #
+# sudoers'in cagri basina yazdigi TOPLU kayit. Birincil PAM basarisizligi (SUDO_FAILURE)
+# DEGILDIR: is_failure/is_success ikisi de False, hicbir sayaca/kurala girmez.
+
+_SUDO_SUM = "Jun  1 05:52:10 web-01 {proc}: {body}"
+_TRAIL = " ; TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash"
+
+
+def test_event_type_and_attempt_count_field_exist():
+    import dataclasses
+    from parser.events import Event
+    assert EventType.SUDO_INCORRECT_PASSWORD_SUMMARY.value == "SUDO_INCORRECT_PASSWORD_SUMMARY"
+    fields = [f.name for f in dataclasses.fields(Event)]
+    assert fields[-2:] == ["actor_username", "attempt_count"]      # en sonda, varsayilanli
+
+
+def test_legacy_event_construction_defaults_attempt_count_to_none():
+    from parser.events import Event
+    e = Event(NOW, "web-01", "sshd", EventType.FAILED_PASSWORD, "root", "192.0.2.1", 22, "raw")
+    assert e.attempt_count is None
+    assert e.to_dict()["attempt_count"] is None
+
+
+@pytest.mark.parametrize("count,noun", [(1, "attempt"), (2, "attempts"), (3, "attempts")])
+def test_sudo_summary_parsed(count, noun):
+    body = f"alice : {count} incorrect password {noun}{_TRAIL}"
+    e = parse_line(_SUDO_SUM.format(proc="sudo[1234]", body=body), now=NOW)
+    assert e.event_type == EventType.SUDO_INCORRECT_PASSWORD_SUMMARY
+    assert e.process == "sudo"
+    assert (e.username, e.actor_username, e.attempt_count) == ("alice", "alice", count)
+    assert e.source_ip is None and e.port is None
+    assert e.is_failure is False and e.is_success is False
+
+
+def test_sudo_summary_to_dict():
+    body = "alice : 3 incorrect password attempts" + _TRAIL
+    d = parse_line(_SUDO_SUM.format(proc="sudo[1234]", body=body), now=NOW).to_dict()
+    assert (d["event_type"], d["attempt_count"], d["username"]) == ("SUDO_INCORRECT_PASSWORD_SUMMARY", 3, "alice")
+
+
+def test_sudo_summary_without_pid_header():
+    e = parse_line(_SUDO_SUM.format(proc="sudo", body="alice : 3 incorrect password attempts" + _TRAIL), now=NOW)
+    assert (e.event_type, e.process) == (EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, "sudo")
+
+
+def test_sudo_summary_without_trailing_fields():
+    e = parse_line(_SUDO_SUM.format(proc="sudo", body="alice : 3 incorrect password attempts"), now=NOW)
+    assert (e.event_type, e.attempt_count) == (EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, 3)
+
+
+def test_sudo_summary_command_with_spaces_and_semicolons():
+    body = "alice : 2 incorrect password attempts ; TTY=pts/0 ; PWD=/tmp ; USER=root ; COMMAND=/bin/sh -c echo a ; echo b"
+    e = parse_line(_SUDO_SUM.format(proc="sudo[9]", body=body), now=NOW)
+    assert (e.event_type, e.attempt_count) == (EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, 2)
+
+
+def test_sudo_summary_max_parser_count():
+    e = parse_line(_SUDO_SUM.format(proc="sudo", body="alice : 4294967295 incorrect password attempts"), now=NOW)
+    assert e.attempt_count == 4294967295
+
+
+@pytest.mark.parametrize("body", [
+    "alice : 0 incorrect password attempts",               # sudo 0'i bu ifadeyle yazmaz
+    "alice : 4294967296 incorrect password attempts",      # ayristirici ust siniri asildi
+    "alice : 12345678901 incorrect password attempts",     # 10 haneden uzun
+    "alice : 1 incorrect password attempts",               # tekil/cogul uyumsuz
+    "alice : 2 incorrect password attempt",
+    "alice : 3 incorrect password attempt",
+    " : 3 incorrect password attempts",                    # aktor yok
+    "alice : authentication rejected after 3 tries",       # ozel authfail_message
+    "alice : 3 intentos de contrasena incorrectos",        # yerellestirilmis metin
+    "alice : 3 incorrect password attemptsX",              # kelime sinirindan sonra cop
+    "alice : -3 incorrect password attempts",
+])
+def test_invalid_sudo_summaries_stay_unknown(body):
+    e = parse_line(_SUDO_SUM.format(proc="sudo[1234]", body=body + _TRAIL), now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+    assert e.attempt_count is None
+
+
+@pytest.mark.parametrize("proc", ["sshd[1]", "su[2]", "login[3]", "runuser[4]"])
+def test_summary_body_from_other_process_is_not_summary(proc):
+    e = parse_line(_SUDO_SUM.format(proc=proc, body="alice : 3 incorrect password attempts" + _TRAIL), now=NOW)
+    assert e.event_type != EventType.SUDO_INCORRECT_PASSWORD_SUMMARY
+    assert e.attempt_count is None
+
+
+def test_sudo_pam_failure_unchanged_and_has_no_attempt_count():
+    e = parse_line(_SUDO_PAM.format(logname="alice", ruser="alice", user="root"), now=NOW)
+    assert (e.event_type, e.username, e.actor_username, e.attempt_count) == (EventType.SUDO_FAILURE, "alice", "alice", None)
+    assert e.is_failure
+
+
+def test_sudo_pam_more_failures_line_is_not_summary():
+    line = ("Jun  1 05:52:40 web-01 sudo: pam_unix(sudo:auth): 2 more authentication failures; "
+            "logname=alice uid=1000 euid=0 tty=/dev/pts/0 ruser=alice rhost=  user=alice")
+    e = parse_line(line, now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+    assert e.attempt_count is None
+
+
+def test_sudo_accepted_command_line_stays_unknown():
+    body = "alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/ls"
+    e = parse_line(_SUDO_SUM.format(proc="sudo[1234]", body=body), now=NOW)
+    assert e.event_type == EventType.UNKNOWN
+
+
+def test_su_events_unaffected_by_summary_parser():
+    ok = parse_line("Jun  1 05:55:10 web-01 su[1]: (to root) alice on pts/0", now=NOW)
+    assert (ok.event_type, ok.attempt_count) == (EventType.SU_SUCCESS, None)

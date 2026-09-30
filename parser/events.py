@@ -23,6 +23,9 @@ class EventType(StrEnum):
     SUDO_FAILURE = "SUDO_FAILURE"         # sudo authentication failure
     SU_FAILURE = "SU_FAILURE"             # su authentication failure (hedef hesaba gecis)
     SU_SUCCESS = "SU_SUCCESS"             # util-linux su basari kaydi: "(to hedef) aktor on tty"
+    # sudoers'in cagri basina yazdigi TOPLU kayit: "alice : 3 incorrect password attempts".
+    # Birincil PAM basarisizligi (SUDO_FAILURE) DEGILDIR; is_failure/is_success disinda tutulur.
+    SUDO_INCORRECT_PASSWORD_SUMMARY = "SUDO_INCORRECT_PASSWORD_SUMMARY"
     AUTH_FAILURE = "AUTH_FAILURE"         # genel PAM authentication failure
     UNKNOWN = "UNKNOWN"                    # taninamayan ama olay olabilecek satir
 
@@ -49,6 +52,9 @@ class Event:
     # ayri tutulur: su'da username gecilmek istenen hesap, actor_username su'yu
     # calistiran kisidir. Sona ve varsayilanli eklendi -> mevcut Event(...) cagrilari bozulmaz.
     actor_username: Optional[str] = None
+    # Toplu bir kaydin tasidigi deneme sayisi (orn. sudo ozetindeki N). Birincil olaylarda
+    # None. Sona ve varsayilanli eklendi -> mevcut Event(...) cagrilari bozulmaz.
+    attempt_count: Optional[int] = None
 
     def to_dict(self) -> dict:
         """
@@ -68,6 +74,7 @@ class Event:
             "port": self.port,
             "raw_line": self.raw_line,
             "actor_username": self.actor_username,
+            "attempt_count": self.attempt_count,
         }
 
     @property
