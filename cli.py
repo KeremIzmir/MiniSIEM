@@ -78,16 +78,16 @@ def _color(text: str, key: str, enabled: bool) -> str:
 
 
 def _print_summary(store: EventStore, color: bool, out) -> None:
-    """Ust ozet kartlari: toplam olay, basarisiz giris, benzersiz IP, alarm, unparsed."""
+    """Ust ozet kartlari: toplam olay, basarisiz kimlik dogrulama, benzersiz IP, alarm, unparsed."""
     s = store.summary()
     print(_color("=== OZET ===", "bold", color), file=out)
-    print(f"  Toplam olay      : {s['toplam_olay']}", file=out)
-    print(f"  Basarisiz giris  : {s['basarisiz_giris']}", file=out)
-    print(f"  Benzersiz IP     : {s['benzersiz_ip']}", file=out)
-    print(f"  Uretilen alarm   : {s['alarm_sayisi']}", file=out)
+    print(f"  Toplam olay                : {s['toplam_olay']}", file=out)
+    print(f"  Basarisiz kimlik dogrulama : {s['basarisiz_kimlik_dogrulama']}", file=out)
+    print(f"  Benzersiz IP               : {s['benzersiz_ip']}", file=out)
+    print(f"  Uretilen alarm             : {s['alarm_sayisi']}", file=out)
     if s["unparsed"]:
         # Eslesmeyen satirlari SESSIZCE yutma (spec): sayisini acikca bildir.
-        print(_color(f"  Parse edilemeyen : {s['unparsed']} satir", "medium", color), file=out)
+        print(_color(f"  Parse edilemeyen           : {s['unparsed']} satir", "medium", color), file=out)
 
 
 def _print_top_ips(store: EventStore, out, limit: int = 5) -> None:

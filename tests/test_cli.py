@@ -520,3 +520,42 @@ def test_sudo_summary_terminal_output_is_safe(tmp_path):
     code, out = _run([str(log), "--no-color"])
     assert code == 1
     assert "\x1b" not in out
+
+
+
+# --------------------------------------------------------------------------- #
+# Kanonik ozet anahtari: CLI basarisiz_kimlik_dogrulama'yi okur ve gosterir
+# --------------------------------------------------------------------------- #
+def test_summary_shows_canonical_failure_label():
+    code, out = _run([str(SAMPLE_LOG), "--no-color"])
+    assert code == 1
+    line = next(l for l in out.splitlines() if "Basarisiz kimlik dogrulama" in l)
+    assert line.rstrip().endswith(": 31")
+    assert "Basarisiz giris" not in out
+
+
+def test_quiet_output_unchanged_by_summary_label():
+    _, out = _run([str(SAMPLE_LOG), "--quiet", "--no-color"])
+    assert "OZET" not in out
+    assert "Basarisiz kimlik dogrulama" not in out
+
+
+def test_print_summary_reads_only_canonical_key():
+    # Ilk taraf tuketici legacy anahtara BAGLI olmamali: alias'siz ozetle de calisir.
+    class CanonicalOnlyStore:
+        def summary(self):
+            return {"toplam_olay": 9, "basarisiz_kimlik_dogrulama": 7,
+                    "benzersiz_ip": 2, "alarm_sayisi": 1, "unparsed": 0}
+
+    buf = io.StringIO()
+    cli._print_summary(CanonicalOnlyStore(), False, buf)
+    line = next(l for l in buf.getvalue().splitlines() if "Basarisiz kimlik dogrulama" in l)
+    assert line.rstrip().endswith(": 7")
+
+
+def test_json_report_keeps_legacy_alias(tmp_path):
+    code, data = _json_report(tmp_path)
+    s = data["summary"]
+    assert code == 1
+    assert (s["toplam_olay"], s["basarisiz_kimlik_dogrulama"], s["basarisiz_giris"],
+            s["benzersiz_ip"], s["alarm_sayisi"], s["unparsed"]) == (36, 31, 31, 6, 6, 1)

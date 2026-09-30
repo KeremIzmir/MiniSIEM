@@ -72,7 +72,7 @@ class EventStore:
 
     def failed_per_minute(self) -> list[tuple[str, int]]:
         """
-        Dakika bazinda basarisiz giris sayisi: [("2026-06-01 05:50", 8), ...] zaman sirali.
+        Dakika bazinda basarisiz kimlik dogrulama sayisi: [("2026-06-01 05:50", 8), ...] zaman sirali.
         Dashboard'daki zaman serisi grafigi bunu kullanir.
         """
         counter: Counter = Counter()
@@ -82,10 +82,18 @@ class EventStore:
         return sorted(counter.items())  # zamana gore sirala
 
     def summary(self) -> dict:
-        """CLI ozet tablosu + dashboard ust kartlari icin tek bakista sayilar."""
+        """
+        CLI ozet tablosu + dashboard ust kartlari icin tek bakista sayilar.
+
+        basarisiz_kimlik_dogrulama: kanonik alan; Event.is_failure olaylarini sayar.
+        basarisiz_giris: geriye uyumluluk icin korunan DEPRECATED alias. Ayni hesaplamadan
+        gelir, bu yuzden iki deger her zaman esittir.
+        """
+        failures = len(self.failed_events())
         return {
             "toplam_olay": len(self._events),
-            "basarisiz_giris": len(self.failed_events()),
+            "basarisiz_kimlik_dogrulama": failures,
+            "basarisiz_giris": failures,  # deprecated alias: mevcut tuketiciler kirilmasin
             "benzersiz_ip": len(self.unique_ips()),
             "alarm_sayisi": len(self._alerts),
             "unparsed": self.unparsed_count,

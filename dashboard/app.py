@@ -124,7 +124,7 @@ def create_app(store: EventStore) -> Flask:
 
     @app.route("/api/timeline")
     def api_timeline():
-        """Dakika bazinda basarisiz giris zaman serisi (grafik beslemek icin)."""
+        """Dakika bazinda basarisiz kimlik dogrulama zaman serisi (grafik beslemek icin)."""
         # [(label, count)] -> [{"t": label, "count": n}] : JSON'da nesne daha okunur.
         return jsonify([{"t": t, "count": c} for t, c in store.failed_per_minute()])
 
