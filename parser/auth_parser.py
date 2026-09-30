@@ -228,21 +228,36 @@ def parse_line(
 
     if (m := _PAM_RE.search(message)) and (fields := _pam_fields(m["fields"])).get("user"):
         # Hedef 'user=' alani dolu olmali; yoksa olay siniflandirilmaz (UNKNOWN'a duser).
+        # Not: "N more authentication failures;" ozet satirlari _PAM_RE ile eslesmez;
+        # ayni PAM islemindeki ek hatalar boylece ikinci kez sayilmaz.
+        #
+        # AKTOR = islemi baslatan yerel hesap: ruser > logname. 'user=' HEDEF hesaptir
+        # ve asla aktorun yedegi olarak kullanilmaz (iki kavram karismasin).
+        actor = fields.get("ruser") or fields.get("logname") or None
         if process == "sudo":
-            # sudo'da ilgilendigimiz kisi parolayi yazan AKTORDUR: ruser > logname > user.
+            # sudo'da username = parolayi yazan aktor: ruser > logname > user. Bu,
+            # geriye uyumlu mevcut davranistir (son yedek 'user' burada korunur).
             # 'user=' hedef hesaptir; rootpw/targetpw ayarinda 'root' olur ve tum
             # kullanicilari tek hesapta birlestirirdi.
             etype = EventType.SUDO_FAILURE
-            username = fields.get("ruser") or fields.get("logname") or fields["user"]
+            username = actor or fields["user"]
+            actor_username = actor
+        elif process == "su":
+            # su'da username = gecilmek istenen HEDEF hesap; aktor ayri alanda.
+            etype = EventType.SU_FAILURE
+            username = fields["user"]
+            actor_username = actor
         else:
-            # sshd, su vb.: dogrulanmaya calisilan HEDEF hesap.
+            # sshd, login vb.: dogrulanmaya calisilan HEDEF hesap; aktor cikarilmaz.
             etype = EventType.AUTH_FAILURE
             username = fields["user"]
+            actor_username = None
         # rhost dolu ve bos string degilse kaynak IP olarak kullan.
         rhost = fields.get("rhost") or None
         return Event(
             timestamp, host, process, etype,
             username=username, source_ip=rhost, port=None, raw_line=line,
+            actor_username=actor_username,
         )
 
     # Baslik taninip mesaj siniflandirilamadi: bilgiyi kaybetme, UNKNOWN dondur.
