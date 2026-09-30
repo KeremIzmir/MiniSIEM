@@ -26,7 +26,7 @@ Linux `auth.log` dosyalarını analiz eden küçük bir **SIEM** (Security Infor
   Önem derecesi sabit değildir; her kural bulgunun büyüklüğüne göre hesaplar.
 
 - **Allowlist** — güvenilir IP'ler tespitten **önce** elenir (yanlış alarm üretmesin). Yalnızca kaynak IP'si olan olayları etkiler: tipik yerel sudo/su olaylarında IP bulunmadığından `sudo_brute_force` ve `su_brute_force` alarmlarını **bastırmaz**. Bir olayda kaynak IP gerçekten doluysa (PAM `rhost`) o olay da bu IP filtresine tabidir.
-- **İki arayüz, tek mantık** — CLI ve pano aynı `parse → store → run_detections` akışını kullanır; kurallar tek yerde (`detection/engine.py`) ve **her iki arayüz de aynı ayar yüzeyini** sunar.
+- **İki arayüz, tek mantık** — CLI ve pano aynı `parse → store → run_detections_with_config` akışını kullanır; kurallar tek yerde (`detection/engine.py`), varsayılan ayarlar tek yerde (`DetectionConfig`) ve **her iki arayüz de aynı ayar yüzeyini** sunar.
 - **JSON çıktı** — `--json` ile özet + olaylar + alarmlar dışa aktarılır.
 - **Log enjeksiyonuna karşı korumalı çıktı** — log satırları saldırgan kontrolündedir; terminale basılmadan önce ANSI/kontrol karakterleri etkisiz hale getirilir (bkz. *Güvenlik notları*).
 
@@ -90,7 +90,7 @@ python -m dashboard.app sample_auth.log                # http://127.0.0.1:5000
 python -m dashboard.app sample_auth.log --host 0.0.0.0 --port 8080
 ```
 
-Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--su-window`, `--su-threshold`, `--su-success-min-fails`, `--su-success-window`, `--allow`).
+Pano, yukarıdaki tespit bayraklarının **hepsini** aynı isimler, varsayılanlar ve doğrulama kurallarıyla kabul eder (`--window`, `--threshold`, `--enum-threshold`, `--min-fails`, `--success-window`, `--anomaly-k`, `--anomaly-min-volume`, `--sudo-window`, `--sudo-threshold`, `--su-window`, `--su-threshold`, `--su-success-min-fails`, `--su-success-window`, `--allow`). Bu bayraklar iki arayüzde de tek ortak tanımdan (`detection/options.py`) üretilir.
 
 Pano rotaları: `/` (HTML), `/api/summary`, `/api/alerts`, `/api/timeline` (JSON).
 
@@ -119,6 +119,8 @@ MiniSiem/
 │   ├── su_brute_force.py  # host + aktör bazlı başarısız su tespiti
 │   ├── su_fail_then_success.py # aynı aktör+hedef için başarısız su ardından başarılı geçiş
 │   ├── sliding_window.py  # ortak "en yoğun kayan pencere" seçicisi (dahili)
+│   ├── config.py          # DetectionConfig: tespit ayarları ve varsayılanların tek kaynağı
+│   ├── options.py         # CLI ve panonun ortak tespit bayrakları
 │   └── engine.py          # tüm kuralları çalıştırıp sıralar
 ├── storage/
 │   └── store.py           # EventStore (bellek + JSON, SQLite'a geçişe hazır)
@@ -190,7 +192,8 @@ Her alarm olay sayısını içerir; ağ kaynaklı kurallarda ilgili IP de bulunu
 - **sudo toplu parola-denemesi özeti (`SUDO_INCORRECT_PASSWORD_SUMMARY`):** sudoers kimlik doğrulama başarısız olduğunda çağrı başına bir özet yazar: `sudo[PID]: alice : 3 incorrect password attempts ; TTY=… ; PWD=… ; USER=root ; COMMAND=…`. Bu satır ayrı bir olay türüdür: `username` = `actor_username` = komutu çalıştıran kullanıcı, `attempt_count` = N (çağrıdaki yanlış parola sayısı), IP/port yok. Birincil PAM satırıyla **aynı** etkinliği anlattığı için **`SUDO_FAILURE` değildir**, `is_failure`/`is_success` sayılmaz; `sudo_brute_force`'a, genel `basarisiz_kimlik_dogrulama` sayacına (ve aynı değeri taşıyan eski `basarisiz_giris` alanına) ve zaman çizelgesine **girmez** ve N hiçbir sayıma eklenmez. Yeni bir alarm kuralı yoktur. Kapsam: yalnızca `sudo` sürecinin varsayılan İngilizce metni (`1 incorrect password attempt` / `N incorrect password attempts`, tekil/çoğul uyumu şart). Ayrıştırıcı, upstream'in işaretsiz deneme sayacıyla uyumlu ve aşırı büyük girdileri reddeden sınırlı bir sayı kabul eder (en fazla 10 hane, 1–4294967295). Özel `authfail_message` ve `sudoers_locale` ile yerelleştirilmiş metinler UNKNOWN kalır; `USER=` hedefi ve diğer alanlar yorumlanmaz.
 - **`SU_SUCCESS` (başarılı su geçişi):** Tek kaynak util-linux `su`'nun kaydıdır: `su[PID]: (to <hedef>) <aktör> on <tty>`. `su` bu satırı PAM kimlik doğrulama, hesap kontrolü (gerekirse süresi dolmuş parola değişimi) ve hedef tutarlılık kontrolü **başarılı olduktan sonra**, kimlik bilgisi ve oturum kurulumundan **önce** yazar. Bu yüzden `SU_SUCCESS` "başarılı geçiş kaydedildi" demektir; parolanın girildiğini ya da kırıldığını (örn. root için `pam_rootok`) veya PAM oturumunun kesin açıldığını **kanıtlamaz**. `username` = hedef, `actor_username` = aktör (boşsa yok). Aktör, başarısız denemedeki PAM `ruser` ile aynı değerdir. PAM `session opened/closed` satırları (aktörü farklı mekanizmadan gelir, boş olabilir, `quiet` seçeneğiyle bastırılabilir) ve `FAILED SU` satırları bilinçli olarak **sayılmaz** (UNKNOWN); böylece tek bir `su` çağrısı iki kez sayılmaz. util-linux dışındaki `su` uygulamalarının başarı kayıtları desteklenmez.
 - **`su_fail_then_success`:** Yalnızca `SU_FAILURE` ve `SU_SUCCESS` olaylarını kullanır ve **tam** `(host, aktör, hedef)` üçlüsüne göre gruplar; aktörü ya da hedefi bilinmeyen olay korelasyona girmez. Başarıdan geriye kapsayıcı pencere içindeki başarısızlıkları sayar (eski denemeler elenir), her başarıdan sonra diziyi sıfırlar ve alarmı daima `high` üretir. `count` yalnızca başarısızlıkları sayar; kanıt son 5 başarısızlık + başarı satırıdır. Aktörün farklı hedefleri taramasını `su_brute_force` yakalar; aynı dizi iki kuralı da tetikleyebilir (farklı anlamlar). Ağ kuralı `fail_then_success` değişmedi ve `SU_SUCCESS` olaylarını almaz. Kaynak IP'si (`rhost`) allowlist'te olan bir `SU_FAILURE` engine tarafından elenir ve korelasyon sayımını düşürebilir.
-- **Genişletme:** Yeni bir kural eklemek = `detection/` altına bir fonksiyon + `engine.py`'ye bir satır. Kuralın ayarları dışarıya açılacaksa, iki arayüz aynı ayar yüzeyini koruyabilsin diye aynı bayraklar hem `cli.py`'ye hem `dashboard/app.py`'ye eklenir.
+- **Genişletme:** Yeni bir kural eklemek = `detection/` altına bir fonksiyon + `engine.py`'ye bir satır. Kuralın ayarları dışarıya açılacaksa: `DetectionConfig`'e bir alan, `run_detections_with_config` içinde kurala aktarım, `detection/options.py`'de bir bayrak ve namespace eşlemesi. CLI ve pano bayrakları bu ortak tanımdan aldığı için iki arayüz kendiliğinden aynı kalır.
+- **Tespit ayarları ve Python API:** Varsayılan tespit ayarları `detection/config.py`'deki `DetectionConfig` içinde tek yerde tutulur (değiştirilemez veri nesnesi; doğrulama yapmaz, geçersiz eşikleri kurallar bugünkü hata mesajlarıyla reddeder). Config tabanlı kod `run_detections_with_config(events, config)` ve panoda `build_store_with_config(logfile, config)` kullanabilir. Mevcut `run_detections(...)` ve `build_store(...)` çağrıları (anahtar kelimeli ve sıralı argümanlarla) aynen çalışmaya devam eder: bu iki imza bugünkü 14 ayarla **dondurulmuş bir uyumluluk yüzeyidir**; ileride eklenecek ayarlar yalnızca `DetectionConfig` üzerinden sunulur.
 
 ---
 

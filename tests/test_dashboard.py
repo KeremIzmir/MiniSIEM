@@ -392,3 +392,32 @@ def test_index_card_reads_canonical_key(store):
 def test_timeline_unchanged_by_summary_key_migration(client):
     assert client.get("/api/timeline").get_json() == [{"t": "2026-06-01 05:00", "count": 2},
                                                       {"t": "2026-06-01 05:01", "count": 1}]
+
+
+# ------------- ortak tespit secenekleri: main() config tabanli yolu kullanir ------------- #
+def test_main_uses_config_native_store(monkeypatch, capsys):
+    import dashboard.app as app_module
+    from detection.config import DetectionConfig
+
+    seen = {}
+    real = app_module.build_store_with_config
+
+    def spy(logfile, config):
+        seen["config"] = config
+        return real(logfile, config)
+
+    monkeypatch.setattr(app_module, "build_store_with_config", spy)
+    monkeypatch.setattr(app_module.Flask, "run", lambda self, **kw: None)
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", str(SAMPLE_LOG), "--sudo-threshold", "4",
+                                     "--allow", "B", "--allow", "A", "--allow", "B"])
+    app_module.main()
+    assert seen["config"] == DetectionConfig(sudo_threshold=4, allowlist=("B", "A", "B"))
+    assert "36 olay" in capsys.readouterr().out
+
+
+def test_main_missing_file_reported_before_invalid_config(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", "yok_boyle.log", "--threshold", "0"])
+    with pytest.raises(SystemExit) as exc:
+        __import__("dashboard.app", fromlist=["main"]).main()
+    assert exc.value.code == 2
+    assert "dosya bulunamadi" in capsys.readouterr().err
