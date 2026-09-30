@@ -110,3 +110,90 @@ def test_severity_high_when_failure_ratio_high():
     assert alert.severity.value == "high"
     # Aciklama, esigin ADAY HARIC hesaplandigini acikca soylemeli.
     assert "diger IP ortalamasi" in alert.description
+
+
+# --- ayar dogrulamasi: k sonlu ve >= 0, min_volume >= 1 ------------------------ #
+# Kanonik hata mesajlari BURADA sabitlenir; engine/CLI/pano testleri yayilimi dogrular.
+import math
+
+import pytest
+
+_K_ERR = "anomaly k negatif olmayan sonlu bir sayi olmali: {}"
+_MV_ERR = "anomaly min_volume en az 1 olmali: {}"
+_OUTLIER = {"192.0.2.1": 40, "192.0.2.2": 5, "192.0.2.3": 6, "192.0.2.4": 5, "192.0.2.5": 6}
+
+
+@pytest.mark.parametrize("k", [-0.0001, -1, float("nan"), float("inf"), float("-inf")])
+def test_invalid_k_rejected_with_exact_message(k):
+    with pytest.raises(ValueError) as info:
+        detect_anomalous_ips(_events_for(_OUTLIER), k=k)
+    assert str(info.value) == _K_ERR.format(k)
+
+
+@pytest.mark.parametrize("k", [0, 0.0, -0.0, 0.1, 2.0, 1000.0, 1e300])
+def test_valid_k_boundaries_accepted(k):
+    detect_anomalous_ips(_events_for(_OUTLIER), k=k)
+
+
+@pytest.mark.parametrize("min_volume", [0, -1, -100])
+def test_invalid_min_volume_rejected_with_exact_message(min_volume):
+    with pytest.raises(ValueError) as info:
+        detect_anomalous_ips(_events_for(_OUTLIER), min_volume=min_volume)
+    assert str(info.value) == _MV_ERR.format(min_volume)
+
+
+@pytest.mark.parametrize("min_volume", [1, 5, 1_000_000])
+def test_valid_min_volume_accepted(min_volume):
+    detect_anomalous_ips(_events_for(_OUTLIER), min_volume=min_volume)
+
+
+@pytest.mark.parametrize("volumes", [
+    {},                                                     # bos olay listesi
+    {"192.0.2.1": 3},                                       # tek IP
+    {"192.0.2.1": 3, "192.0.2.2": 3},                       # iki IP
+    {"192.0.2.1": 30, "192.0.2.2": 3, "192.0.2.3": 3},      # uc+ IP
+], ids=["empty", "one-ip", "two-ips", "three-ips"])
+@pytest.mark.parametrize("kwargs", [{"k": -1}, {"k": float("nan")}, {"min_volume": 0}],
+                         ids=["k-negative", "k-nan", "min-volume-zero"])
+def test_validation_runs_before_event_processing(volumes, kwargs):
+    # len(total) < 3 erken donusunden ONCE: olay olmasa da gecersiz ayar hata verir.
+    with pytest.raises(ValueError):
+        detect_anomalous_ips(_events_for(volumes), **kwargs)
+
+
+def test_k_is_validated_before_min_volume():
+    with pytest.raises(ValueError) as info:
+        detect_anomalous_ips([], k=-1, min_volume=0)
+    assert str(info.value) == _K_ERR.format(-1)
+
+
+# --- gecerli sinirlarda algoritma davranisi -------------------------------------- #
+def test_k_zero_flags_only_volume_above_baseline_mean():
+    # k=0 -> esik = diger IP'lerin ortalamasi (+0 sapma). Taban 1,1,1 -> yalnizca A.
+    alerts = detect_anomalous_ips(_events_for({"192.0.2.1": 20, "192.0.2.2": 1, "192.0.2.3": 1,
+                                               "192.0.2.4": 1}), k=0, min_volume=1)
+    assert [a.source_ip for a in alerts] == ["192.0.2.1"]
+
+
+def test_k_zero_with_close_volumes_flags_only_the_top_ip():
+    # 10/9/9/8: yalnizca 10 kendi disindakilerin ortalamasini (8.67) asar; 9 > 9.0 degil.
+    alerts = detect_anomalous_ips(_events_for({"192.0.2.1": 10, "192.0.2.2": 9, "192.0.2.3": 9,
+                                               "192.0.2.4": 8}), k=0)
+    assert [a.source_ip for a in alerts] == ["192.0.2.1"]
+
+
+def test_negative_zero_k_behaves_like_zero():
+    events = _events_for({"192.0.2.1": 10, "192.0.2.2": 9, "192.0.2.3": 9, "192.0.2.4": 8})
+    key = lambda alerts: [(a.source_ip, a.count, a.description) for a in alerts]
+    assert key(detect_anomalous_ips(events, k=-0.0)) == key(detect_anomalous_ips(events, k=0.0))
+
+
+def test_min_volume_one_evaluates_small_real_outlier():
+    events = _events_for({"192.0.2.1": 4, "192.0.2.2": 1, "192.0.2.3": 1, "192.0.2.4": 1})
+    assert detect_anomalous_ips(events) == []                       # varsayilan fren (5)
+    assert [a.source_ip for a in detect_anomalous_ips(events, min_volume=1)] == ["192.0.2.1"]
+
+
+def test_huge_finite_k_is_valid_and_suppresses():
+    assert math.isfinite(1e300)
+    assert detect_anomalous_ips(_events_for(_OUTLIER), k=1e300) == []

@@ -1,7 +1,7 @@
 """
 anomaly.py — Istatistiksel aykiri-deger (outlier) ile anormal IP tespiti.
 
-Bagimlilik: parser/events.py, detection/alert.py, stdlib(ipaddress, statistics).
+Bagimlilik: parser/events.py, detection/alert.py, stdlib(ipaddress, math, statistics).
 
 FIKIR: Onceki kurallar sabit esikler kullanir (orn. >=5 deneme). Ama "normal"
 trafik her ortamda farklidir. Burada esigi VERIYE gore belirleriz: her IP'nin
@@ -34,6 +34,7 @@ EK OLCUTLER (alarm aciklamasina baglam katar):
 """
 
 import ipaddress
+import math
 import statistics
 from parser.events import Event
 from detection.alert import Alert, Severity
@@ -64,8 +65,19 @@ def detect_anomalous_ips(
       min_volume : alarm icin gereken min. mutlak deneme sayisi. Z-score yuksek olsa
                    bile cok kucuk hacmi (orn 2 deneme) flag'lemeyelim diye guvenlik freni.
 
+    Gecerli aralik (diger kurallar gibi olaylar islenmeden ONCE, parametre sirasiyla dogrulanir):
+      k          : sonlu ve >= 0 (0 gecerli: esik = taban ortalamasi). Negatif, NaN ya da
+                   sonsuz k ValueError verir: NaN/+inf kurali sessizce kapatir, negatif/-inf
+                   ise normal hacimleri 'anormal' yapar.
+      min_volume : en az 1 (sayilan her IP'nin zaten en az 1 olayi vardir; 0/negatif anlamsiz).
+
     Donus: aykiri her IP icin bir Alert.
     """
+    if not math.isfinite(k) or k < 0:
+        raise ValueError(f"anomaly k negatif olmayan sonlu bir sayi olmali: {k}")
+    if min_volume < 1:
+        raise ValueError(f"anomaly min_volume en az 1 olmali: {min_volume}")
+
     alerts: list[Alert] = []
 
     # 1) IP basina sayac: toplam, basarisiz, denenen kullanicilar.

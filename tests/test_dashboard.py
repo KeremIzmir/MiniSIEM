@@ -421,3 +421,42 @@ def test_main_missing_file_reported_before_invalid_config(monkeypatch, capsys):
         __import__("dashboard.app", fromlist=["main"]).main()
     assert exc.value.code == 2
     assert "dosya bulunamadi" in capsys.readouterr().err
+
+
+# ------------------ anomalous_ip ayar dogrulamasi (pano yollari) ------------------ #
+@pytest.mark.parametrize("overrides,message", [
+    ({"anomaly_k": -1}, "anomaly k negatif olmayan sonlu bir sayi olmali: -1"),
+    ({"anomaly_k": float("nan")}, "anomaly k negatif olmayan sonlu bir sayi olmali: nan"),
+    ({"anomaly_min_volume": 0}, "anomaly min_volume en az 1 olmali: 0"),
+], ids=["k-negative", "k-nan", "min-volume-zero"])
+def test_build_store_paths_reject_invalid_anomaly_settings(overrides, message):
+    from detection.config import DetectionConfig
+    from dashboard.app import build_store_with_config
+    with pytest.raises(ValueError) as legacy:
+        build_store(str(SAMPLE_LOG), **overrides)
+    with pytest.raises(ValueError) as native:
+        build_store_with_config(str(SAMPLE_LOG), DetectionConfig(**overrides))
+    assert str(legacy.value) == str(native.value) == message
+
+
+@pytest.mark.parametrize("argv", [["--anomaly-k", "-1"], ["--anomaly-k=-inf"], ["--anomaly-min-volume", "0"]],
+                         ids=lambda a: " ".join(a))
+def test_main_invalid_anomaly_settings_exit_2(monkeypatch, capsys, argv):
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", str(SAMPLE_LOG), *argv])
+    with pytest.raises(SystemExit) as exc:
+        __import__("dashboard.app", fromlist=["main"]).main()
+    assert exc.value.code == 2
+    assert capsys.readouterr().err.startswith("HATA: gecersiz tespit ayari: anomaly ")
+
+
+def test_main_missing_file_wins_over_invalid_anomaly_setting(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mini-siem-dashboard", "yok_boyle.log", "--anomaly-k", "-1"])
+    with pytest.raises(SystemExit) as exc:
+        __import__("dashboard.app", fromlist=["main"]).main()
+    err = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert "dosya bulunamadi" in err and "anomaly" not in err
+
+
+def test_build_store_valid_anomaly_boundaries():
+    assert build_store(str(SAMPLE_LOG), anomaly_k=0, anomaly_min_volume=1).summary()["toplam_olay"] == 36
