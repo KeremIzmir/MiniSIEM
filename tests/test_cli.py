@@ -469,3 +469,54 @@ def test_su_fail_then_success_output_is_neutralised(tmp_path):
     assert code == 1
     assert "su_fail_then_success" in out
     assert "\x1b" not in out and "\x07" not in out
+
+
+
+# --------------------------------------------------------------------------- #
+# sudo parola-denemesi ozeti — ayristirilir ama hicbir sayaci/alarmi degistirmez
+# --------------------------------------------------------------------------- #
+_SUDO_PAM_LINE = ("Jun  1 05:52:{sec:02d} web-01 sudo[4242]: pam_unix(sudo:auth): authentication failure; "
+                  "logname=alice uid=1000 euid=0 tty=/dev/pts/0 ruser=alice rhost=  user=alice\n")
+_SUDO_SUMMARY_LINE = ("Jun  1 05:52:{sec:02d} web-01 sudo[4242]: {actor} : {n} incorrect password attempts ; "
+                      "TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash\n")
+
+
+def test_sudo_summary_realistic_sequence_end_to_end(tmp_path):
+    log = tmp_path / "sudo_sum.log"
+    log.write_text(_SUDO_PAM_LINE.format(sec=10) + _SUDO_SUMMARY_LINE.format(sec=12, actor="alice", n=3),
+                   encoding="utf-8")
+    code, data = _json_for(tmp_path, log)
+    assert [e["event_type"] for e in data["events"]] == ["SUDO_FAILURE", "SUDO_INCORRECT_PASSWORD_SUMMARY"]
+    assert data["events"][1]["attempt_count"] == 3
+    assert data["summary"]["toplam_olay"] == 2
+    assert data["summary"]["basarisiz_giris"] == 1          # ozet sayilmaz
+    assert data["alerts"] == []                              # esik 3'e ulasilmaz
+    assert code == 0
+
+
+def test_sudo_summary_synthetic_double_count_end_to_end(tmp_path):
+    log = tmp_path / "sudo_sum3.log"
+    log.write_text("".join(_SUDO_PAM_LINE.format(sec=s) for s in (10, 15, 20))
+                   + _SUDO_SUMMARY_LINE.format(sec=22, actor="alice", n=3), encoding="utf-8")
+    code, data = _json_for(tmp_path, log)
+    assert data["summary"]["basarisiz_giris"] == 3
+    sudo = [a for a in data["alerts"] if a["rule_name"] == "sudo_brute_force"]
+    assert len(sudo) == 1
+    assert (sudo[0]["count"], sudo[0]["severity"]) == (3, "medium")
+    assert all("incorrect password" not in line for line in sudo[0]["evidence"])
+    assert code == 1
+
+
+def test_sudo_summary_adds_no_flags():
+    opts = {a for action in cli.build_parser()._actions for a in action.option_strings}
+    assert not any("summary" in o or "attempt" in o for o in opts)
+
+
+def test_sudo_summary_terminal_output_is_safe(tmp_path):
+    log = tmp_path / "sudo_ctl.log"
+    lines = "".join(_SUDO_PAM_LINE.format(sec=s) for s in (10, 15, 20))
+    lines += _SUDO_SUMMARY_LINE.format(sec=22, actor="al\x1b[2Jice", n=3)
+    log.write_text(lines, encoding="utf-8")
+    code, out = _run([str(log), "--no-color"])
+    assert code == 1
+    assert "\x1b" not in out

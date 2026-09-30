@@ -114,6 +114,41 @@ _PAM_FIELD_RE = re.compile(r"(?<!\S)(?P<key>\w+)=(?P<value>\S*)")
 _SU_SUCCESS_RE = re.compile(r"^\(to (?P<target>\S+)\) (?P<actor>\S*) on (?P<tty>\S+)$")
 
 
+# sudoers'in kimlik dogrulama sonunda yazdigi TOPLU kayit (varsayilan Ingilizce metin):
+#   "alice : 3 incorrect password attempts ; TTY=pts/0 ; PWD=... ; USER=root ; COMMAND=..."
+#   "alice : 1 incorrect password attempt ; ..."
+# sudo her denemeyi AYNI PAM handle'inda yapar; pam_unix yalnizca ilk hatayi loglar ve
+# sudo handle'i PAM_DATA_SILENT ile kapattigi icin 'N more authentication failures' satiri
+# yazilmaz. N, bu cagrinin yanlis parola sayisidir: birincil PAM olaylarina EKLENMEZ.
+#   (?P<actor>\S+)       -> komutu calistiran kullanici (bos olamaz)
+#   (?P<count>\d{1,10})  -> en fazla 10 hane: asiri buyuk girdi int()'e hic ulasmaz
+#   (?P<noun>attempts?)  -> tekil/cogul; sayiyla uyumu ayrica kontrol edilir (ngettext)
+#   (?: ;.*)?$           -> kalan eventlog alanlari (TTY/PWD/USER/COMMAND) YORUMLANMAZ
+# Ozel authfail_message ya da yerellestirilmis metin eslesmez -> UNKNOWN (bilincli).
+_SUDO_SUMMARY_RE = re.compile(
+    r"^(?P<actor>\S+) : (?P<count>\d{1,10}) incorrect password (?P<noun>attempts?)(?: ;.*)?$"
+)
+# Ust sinir: upstream'in isaretsiz deneme sayaciyla uyumlu, savunma amacli sinir.
+_MAX_ATTEMPT_COUNT = 4294967295
+
+
+def _sudo_summary_count(message: str) -> Optional[tuple[str, int]]:
+    """
+    sudo ozet kaydini (aktor, N) olarak cozer; gecersizse None (satir UNKNOWN kalir).
+
+    Kosullar: 1 <= N <= _MAX_ATTEMPT_COUNT ve N == 1 ise 'attempt', N >= 2 ise 'attempts'.
+    """
+    m = _SUDO_SUMMARY_RE.match(message)
+    if not m:
+        return None
+    count = int(m["count"])  # en fazla 10 hane -> guvenli
+    if not 1 <= count <= _MAX_ATTEMPT_COUNT:
+        return None
+    if (m["noun"] == "attempt") != (count == 1):
+        return None  # tekil/cogul uyumsuzlugu: varsayilan metin degil
+    return m["actor"], count
+
+
 def _pam_fields(text: str) -> dict[str, str]:
     """PAM mesajindaki anahtar=deger alanlarini dict'e cevirir (ayni anahtar tekrarlanirsa ilki)."""
     fields: dict[str, str] = {}
@@ -280,6 +315,16 @@ def parse_line(
             timestamp, host, process, EventType.SU_SUCCESS,
             username=m["target"], source_ip=None, port=None, raw_line=line,
             actor_username=m["actor"] or None,
+        )
+
+    # sudo toplu parola-denemesi ozeti. Yalnizca 'sudo' surecinden. Birincil basarisizlik
+    # degildir: SUDO_FAILURE sayilarina, tespit kurallarina ve genel sayaclara girmez.
+    if process == "sudo" and (summary := _sudo_summary_count(message)):
+        actor, count = summary
+        return Event(
+            timestamp, host, process, EventType.SUDO_INCORRECT_PASSWORD_SUMMARY,
+            username=actor, source_ip=None, port=None, raw_line=line,
+            actor_username=actor, attempt_count=count,
         )
 
     # Baslik taninip mesaj siniflandirilamadi: bilgiyi kaybetme, UNKNOWN dondur.

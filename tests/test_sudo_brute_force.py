@@ -206,3 +206,46 @@ def test_equal_density_tie_keeps_earliest_window():
     a = detect_sudo_brute_force(second + first, window=10)[0]
     assert a.evidence == [e.raw_line for e in first]
     assert a.time_window == "05:00:00-05:00:10 (10s)"
+
+
+
+# --- sudo parola-denemesi OZETI: birincil sayima ASLA eklenmez ------------------ #
+
+def sudo_summary(offset: float = 0.0, count: int = 3, user="bob", host: str = "web-01"):
+    """sudoers'in cagri basina yazdigi toplu kayit (attempt_count = N)."""
+    e = make_event(offset=offset, event_type=EventType.SUDO_INCORRECT_PASSWORD_SUMMARY, ip=None,
+                   user=user, host=host, process="sudo")
+    e.port = None
+    e.actor_username = user
+    e.attempt_count = count
+    return e
+
+
+def test_realistic_pam_unix_sequence_is_not_double_counted():
+    # pam_unix + sudo: 1 birincil PAM hatasi + ozet(N=3). Esik 3'e ulasilmaz.
+    events = [sudo_fail(0), sudo_summary(1, count=3)]
+    assert detect_sudo_brute_force(events) == []
+
+
+def test_synthetic_three_pam_failures_plus_summary_count_three_not_six():
+    fails = sudo_fails(3, step=5)
+    summary = sudo_summary(11, count=3)
+    alerts = detect_sudo_brute_force(fails + [summary])
+    assert len(alerts) == 1
+    a = alerts[0]
+    assert a.count == 3                                   # 6 DEGIL
+    assert a.severity == Severity.MEDIUM
+    assert a.evidence == [e.raw_line for e in fails]      # ozet satiri kanitta YOK
+    assert summary.raw_line not in a.evidence
+
+
+def test_summary_does_not_change_alert_output():
+    fails = sudo_fails(4, step=5)
+    with_summary = detect_sudo_brute_force(fails + [sudo_summary(16, count=99)])
+    without = detect_sudo_brute_force(fails)
+    key = lambda a: (a.rule_name, a.severity, a.count, a.time_window, a.description, a.evidence)
+    assert [key(a) for a in with_summary] == [key(a) for a in without]
+
+
+def test_summaries_alone_never_alert():
+    assert detect_sudo_brute_force([sudo_summary(i * 5, count=3) for i in range(10)]) == []
